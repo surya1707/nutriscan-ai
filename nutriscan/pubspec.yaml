@@ -1,0 +1,61 @@
+name: nutriscan_ai
+description: NutriScan AI - Personalized Ingredient Intelligence
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State management
+  flutter_riverpod: ^2.4.9
+  riverpod_annotation: ^2.3.3
+
+  # Navigation
+  go_router: ^13.0.0
+
+  # Camera & scanning
+  camera: ^0.10.5+9
+  google_mlkit_text_recognition: ^0.13.0
+  mobile_scanner: ^3.5.4
+  image_picker: ^1.0.7
+
+  # Local storage
+  drift: ^2.14.1
+  sqlite3_flutter_libs: ^0.5.18
+  shared_preferences: ^2.2.2
+  path_provider: ^2.1.2
+  path: ^1.9.0
+
+  # UI
+  cupertino_icons: ^1.0.6
+  flutter_svg: ^2.0.9
+  cached_network_image: ^3.3.1
+
+  # Utils
+  intl: ^0.19.0
+  uuid: ^4.3.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  build_runner: ^2.4.8
+  riverpod_generator: ^2.3.9
+  drift_dev: ^2.14.1
+  flutter_launcher_icons: ^0.11.0
+
+flutter_icons:
+  android: true
+  ios: true
+  image_path: "assets/images/app_icon.png"
+  adaptive_icon_background: "#FF8BC34A"
+  adaptive_icon_foreground: "assets/images/app_icon.png"
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
