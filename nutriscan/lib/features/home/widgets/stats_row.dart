@@ -1,45 +1,64 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/providers/scan_history_provider.dart';
 
-class StatsRow extends StatelessWidget {
-  final int totalScans;
-  final int safeCount;
-  final int flaggedCount;
+class StatsRow extends ConsumerWidget {
+  const StatsRow({super.key});
 
-  const StatsRow({
-    super.key,
-    required this.totalScans,
-    required this.safeCount,
-    required this.flaggedCount,
-  });
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final statsAsync = ref.watch(scanStatsProvider);
+
+    return statsAsync.when(
+      loading: () => const _StatsRowSkeleton(),
+      error: (_, __) => const _StatsRowSkeleton(),
+      data: (stats) => Row(
+        children: [
+          Expanded(child: _StatCard(
+            icon: Icons.layers_outlined,
+            iconColor: AppColors.textSecondary,
+            value: stats.total.toString(),
+            label: 'Total\nscans',
+          )),
+          const SizedBox(width: 10),
+          Expanded(child: _StatCard(
+            icon: Icons.check_circle,
+            iconColor: AppColors.safeGreen,
+            value: stats.safe.toString(),
+            label: 'Safe',
+            iconFilled: true,
+          )),
+          const SizedBox(width: 10),
+          Expanded(child: _StatCard(
+            icon: Icons.warning_rounded,
+            iconColor: AppColors.flaggedRed,
+            value: stats.flagged.toString(),
+            label: 'Flagged',
+            iconFilled: true,
+          )),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatsRowSkeleton extends StatelessWidget {
+  const _StatsRowSkeleton();
 
   @override
   Widget build(BuildContext context) {
     return Row(
-      children: [
-        Expanded(child: _StatCard(
-          icon: Icons.layers_outlined,
-          iconColor: AppColors.textSecondary,
-          value: totalScans.toString(),
-          label: 'Total\nscans',
-        )),
-        const SizedBox(width: 10),
-        Expanded(child: _StatCard(
-          icon: Icons.check_circle,
-          iconColor: AppColors.safeGreen,
-          value: safeCount.toString(),
-          label: 'Safe',
-          iconFilled: true,
-        )),
-        const SizedBox(width: 10),
-        Expanded(child: _StatCard(
-          icon: Icons.warning_rounded,
-          iconColor: AppColors.flaggedRed,
-          value: flaggedCount.toString(),
-          label: 'Flagged',
-          iconFilled: true,
-        )),
-      ],
+      children: List.generate(3, (i) => Expanded(
+        child: Container(
+          margin: EdgeInsets.only(left: i == 0 ? 0 : 10),
+          height: 88,
+          decoration: BoxDecoration(
+            color: AppColors.divider,
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+      )),
     );
   }
 }

@@ -4,6 +4,8 @@ import '../../features/home/screens/home_screen.dart';
 import '../../features/history/screens/history_screen.dart';
 import '../../features/profile/screens/profile_screen.dart';
 import '../../features/scanner/screens/scanner_screen.dart';
+import '../../features/scanner/screens/results_screen.dart';
+import '../../features/scanner/models/scan_result_model.dart';
 import '../../shared/widgets/main_shell.dart';
 
 final router = GoRouter(
@@ -18,5 +20,12 @@ final router = GoRouter(
       ],
     ),
     GoRoute(path: '/scanner', builder: (c, s) => const ScannerScreen()),
+    GoRoute(
+      path: '/results',
+      builder: (c, s) {
+        final result = s.extra as ScanResult?;
+        return ResultsScreen(result: result);
+      },
+    ),
   ],
 );

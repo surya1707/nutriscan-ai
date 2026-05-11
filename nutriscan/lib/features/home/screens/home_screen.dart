@@ -60,7 +60,7 @@ class HomeScreen extends StatelessWidget {
               const SizedBox(height: 16),
 
               // Stats
-              const StatsRow(totalScans: 0, safeCount: 0, flaggedCount: 0),
+              const StatsRow(),
               const SizedBox(height: 16),
 
               // Personalize banner

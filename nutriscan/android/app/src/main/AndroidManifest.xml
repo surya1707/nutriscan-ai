@@ -1,4 +1,17 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Camera for scanning -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Internet for Open Food Facts API -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Gallery / image picking -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+
+    <!-- Camera feature declaration -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+
     <application
         android:label="@string/app_name"
         android:name="${applicationName}"

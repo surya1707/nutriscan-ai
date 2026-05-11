@@ -1,43 +1,37 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/providers/user_profile_provider.dart';
 
-class ProfileScreen extends StatefulWidget {
+class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({super.key});
 
   @override
-  State<ProfileScreen> createState() => _ProfileScreenState();
+  ConsumerState<ProfileScreen> createState() => _ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen> {
-  final _nameController = TextEditingController();
+class _ProfileScreenState extends ConsumerState<ProfileScreen> {
+  late TextEditingController _nameController;
+  bool _controllerInit = false;
+  bool _saving = false;
 
   final _allergies = [
     'Peanuts', 'Tree Nuts', 'Dairy', 'Eggs', 'Soy',
     'Wheat / Gluten', 'Fish', 'Shellfish', 'Sesame', 'Mustard', 'Sulfites', 'Corn',
   ];
-
   final _conditions = [
     'Diabetes', 'Hypertension', 'High Cholesterol', 'Celiac Disease',
     'IBS', 'Kidney Disease', 'PCOS', 'Heart Disease',
   ];
-
   final _goals = [
     'Vegan', 'Vegetarian', 'Keto', 'Low Sodium', 'Low Sugar',
     'High Protein', 'Whole Foods', 'Halal', 'Kosher', 'Gluten-Free',
   ];
 
-  final Set<String> _selectedAllergies = {};
-  final Set<String> _selectedConditions = {};
-  final Set<String> _selectedGoals = {};
-
-  void _toggle(Set<String> set, String val) {
-    setState(() {
-      if (set.contains(val)) {
-        set.remove(val);
-      } else {
-        set.add(val);
-      }
-    });
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController();
   }
 
   @override
@@ -46,128 +40,177 @@ class _ProfileScreenState extends State<ProfileScreen> {
     super.dispose();
   }
 
+  Future<void> _save(UserProfile profile) async {
+    setState(() => _saving = true);
+    final updated = profile.copyWith(displayName: _nameController.text.trim());
+    await ref.read(userProfileProvider.notifier).save(updated);
+    setState(() => _saving = false);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Profile saved ✓'),
+          backgroundColor: AppColors.safeGreen,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.cream,
-      body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const SizedBox(height: 24),
-                    Text(
-                      'HEALTH PROFILE',
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: AppColors.mediumGreen,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Make scans personal',
-                      style: Theme.of(context).textTheme.headlineMedium,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'We analyze every label against your profile.\nStored locally on your device.',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                    const SizedBox(height: 24),
+    final profileAsync = ref.watch(userProfileProvider);
 
-                    // Display name
-                    _SectionLabel(label: 'Display name'),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: _nameController,
-                      style: const TextStyle(fontSize: 15, color: AppColors.textPrimary),
-                      decoration: const InputDecoration(hintText: 'e.g. Alex'),
-                    ),
-                    const SizedBox(height: 24),
-
-                    // Allergies
-                    _SectionLabel(label: 'Allergies'),
-                    const SizedBox(height: 10),
-                    _ChipGroup(
-                      items: _allergies,
-                      selected: _selectedAllergies,
-                      onToggle: (v) => _toggle(_selectedAllergies, v),
-                    ),
-                    const SizedBox(height: 24),
-
-                    // Chronic conditions
-                    _SectionLabel(label: 'Chronic conditions'),
-                    const SizedBox(height: 10),
-                    _ChipGroup(
-                      items: _conditions,
-                      selected: _selectedConditions,
-                      onToggle: (v) => _toggle(_selectedConditions, v),
-                    ),
-                    const SizedBox(height: 24),
-
-                    // Dietary goals
-                    _SectionLabel(label: 'Dietary goals'),
-                    const SizedBox(height: 10),
-                    _ChipGroup(
-                      items: _goals,
-                      selected: _selectedGoals,
-                      onToggle: (v) => _toggle(_selectedGoals, v),
-                    ),
-                    const SizedBox(height: 32),
-                  ],
-                ),
-              ),
-            ),
-
-            // Save button pinned at bottom
-            Padding(
-              padding: EdgeInsets.only(
-                left: 20,
-                right: 20,
-                bottom: MediaQuery.of(context).padding.bottom + 16,
-                top: 12,
-              ),
-              child: GestureDetector(
-                onTap: () {
-                  // Save profile logic
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Profile saved!')),
-                  );
-                },
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  decoration: BoxDecoration(
-                    color: AppColors.darkGreen,
-                    borderRadius: BorderRadius.circular(30),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: const [
-                      Icon(Icons.save_outlined, color: Colors.white, size: 20),
-                      SizedBox(width: 10),
-                      Text(
-                        'Save profile',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
+    return profileAsync.when(
+      loading: () => const Scaffold(
+        backgroundColor: AppColors.cream,
+        body: Center(child: CircularProgressIndicator()),
       ),
+      error: (e, _) => Scaffold(
+        backgroundColor: AppColors.cream,
+        body: Center(child: Text('Error: $e')),
+      ),
+      data: (profile) {
+        // Sync controller text once after first load
+        if (!_controllerInit) {
+          _nameController.text = profile.displayName;
+          _controllerInit = true;
+        }
+
+        return Scaffold(
+          backgroundColor: AppColors.cream,
+          body: SafeArea(
+            child: Column(
+              children: [
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(height: 24),
+                        Text(
+                          'HEALTH PROFILE',
+                          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            color: AppColors.mediumGreen,
+                            letterSpacing: 1.2,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text('Make scans personal',
+                            style: Theme.of(context).textTheme.headlineMedium),
+                        const SizedBox(height: 8),
+                        Text(
+                          'We analyze every label against your profile.\nStored locally on your device.',
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+
+                        // Display name
+                        _SectionLabel(label: 'Display name'),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: _nameController,
+                          style: const TextStyle(
+                              fontSize: 15, color: AppColors.textPrimary),
+                          decoration:
+                              const InputDecoration(hintText: 'e.g. Alex'),
+                        ),
+                        const SizedBox(height: 24),
+
+                        // Allergies
+                        _SectionLabel(label: 'Allergies'),
+                        const SizedBox(height: 10),
+                        _ChipGroup(
+                          items: _allergies,
+                          selected: profile.allergies,
+                          onToggle: (v) =>
+                              ref.read(userProfileProvider.notifier).toggleAllergy(v),
+                        ),
+                        const SizedBox(height: 24),
+
+                        // Chronic conditions
+                        _SectionLabel(label: 'Chronic conditions'),
+                        const SizedBox(height: 10),
+                        _ChipGroup(
+                          items: _conditions,
+                          selected: profile.conditions,
+                          onToggle: (v) =>
+                              ref.read(userProfileProvider.notifier).toggleCondition(v),
+                        ),
+                        const SizedBox(height: 24),
+
+                        // Dietary goals
+                        _SectionLabel(label: 'Dietary goals'),
+                        const SizedBox(height: 10),
+                        _ChipGroup(
+                          items: _goals,
+                          selected: profile.goals,
+                          onToggle: (v) =>
+                              ref.read(userProfileProvider.notifier).toggleGoal(v),
+                        ),
+                        const SizedBox(height: 32),
+                      ],
+                    ),
+                  ),
+                ),
+
+                // Save button
+                Padding(
+                  padding: EdgeInsets.only(
+                    left: 20,
+                    right: 20,
+                    bottom: MediaQuery.of(context).padding.bottom + 16,
+                    top: 12,
+                  ),
+                  child: GestureDetector(
+                    onTap: _saving ? null : () => _save(profile),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      decoration: BoxDecoration(
+                        color: _saving
+                            ? AppColors.mediumGreen
+                            : AppColors.darkGreen,
+                        borderRadius: BorderRadius.circular(30),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          if (_saving)
+                            const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                color: Colors.white,
+                                strokeWidth: 2,
+                              ),
+                            )
+                          else
+                            const Icon(Icons.save_outlined,
+                                color: Colors.white, size: 20),
+                          const SizedBox(width: 10),
+                          Text(
+                            _saving ? 'Saving…' : 'Save profile',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
