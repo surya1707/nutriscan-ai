@@ -4,8 +4,13 @@ import '../models/scan_result_model.dart';
 
 class NutrientInsightGrid extends StatelessWidget {
   final List<NutrientInfo> nutrients;
+  final bool hasFullData;
 
-  const NutrientInsightGrid({super.key, required this.nutrients});
+  const NutrientInsightGrid({
+    super.key,
+    required this.nutrients,
+    this.hasFullData = true,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -14,7 +19,37 @@ class NutrientInsightGrid extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _sectionHeader(context, 'Nutrient Breakdown'),
+          Row(
+            children: [
+              const Text(
+                'Nutrient Breakdown',
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              if (!hasFullData) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF0F0F0),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Text(
+                    'Scan barcode for full data',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: AppColors.textMuted,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
           const SizedBox(height: 12),
           GridView.count(
             crossAxisCount: 2,
@@ -38,12 +73,13 @@ class _NutrientTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = _levelColors(nutrient.level);
+    final isUnknown = nutrient.level == NutritionLevel.unknown;
+    final colors = isUnknown ? _unknownColors() : _levelColors(nutrient.level);
 
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.cardBg,
+        color: isUnknown ? const Color(0xFFF8F8F8) : AppColors.cardBg,
         borderRadius: BorderRadius.circular(18),
         boxShadow: [
           BoxShadow(
@@ -52,7 +88,12 @@ class _NutrientTile extends StatelessWidget {
             offset: const Offset(0, 4),
           ),
         ],
-        border: Border.all(color: AppColors.divider, width: 0.8),
+        border: Border.all(
+          color: isUnknown
+              ? const Color(0xFFE8E8E8)
+              : AppColors.divider,
+          width: 0.8,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -65,7 +106,9 @@ class _NutrientTile extends StatelessWidget {
               Text(
                 nutrient.name,
                 style: TextStyle(
-                  color: AppColors.textSecondary,
+                  color: isUnknown
+                      ? AppColors.textMuted
+                      : AppColors.textSecondary,
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
                   letterSpacing: 0.3,
@@ -77,13 +120,15 @@ class _NutrientTile extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: colors.dot,
                   shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: colors.dot.withOpacity(0.5),
-                      blurRadius: 6,
-                      spreadRadius: 1,
-                    ),
-                  ],
+                  boxShadow: isUnknown
+                      ? null
+                      : [
+                          BoxShadow(
+                            color: colors.dot.withOpacity(0.5),
+                            blurRadius: 6,
+                            spreadRadius: 1,
+                          ),
+                        ],
                 ),
               ),
             ],
@@ -96,7 +141,9 @@ class _NutrientTile extends StatelessWidget {
               Text(
                 nutrient.value,
                 style: TextStyle(
-                  color: AppColors.textPrimary,
+                  color: isUnknown
+                      ? const Color(0xFFBBBBBB)
+                      : AppColors.textPrimary,
                   fontSize: 26,
                   fontWeight: FontWeight.w800,
                   height: 1,
@@ -144,6 +191,7 @@ class _NutrientTile extends StatelessWidget {
       case NutritionLevel.good: return 'HEALTHY';
       case NutritionLevel.moderate: return 'MODERATE';
       case NutritionLevel.poor: return 'HIGH';
+      case NutritionLevel.unknown: return 'NO DATA';
     }
   }
 
@@ -167,24 +215,22 @@ class _NutrientTile extends StatelessWidget {
           bg: const Color(0xFFFFF0EF),
           label: AppColors.flaggedRed,
         );
+      case NutritionLevel.unknown:
+        return _unknownColors();
     }
   }
+
+  _TrafficColors _unknownColors() => const _TrafficColors(
+        dot: Color(0xFFCCCCCC),
+        bg: Color(0xFFF0F0F0),
+        label: Color(0xFF999999),
+      );
 }
 
 class _TrafficColors {
   final Color dot;
   final Color bg;
   final Color label;
-  const _TrafficColors({required this.dot, required this.bg, required this.label});
-}
-
-Widget _sectionHeader(BuildContext context, String title) {
-  return Text(
-    title,
-    style: const TextStyle(
-      color: AppColors.textPrimary,
-      fontSize: 17,
-      fontWeight: FontWeight.w700,
-    ),
-  );
+  const _TrafficColors(
+      {required this.dot, required this.bg, required this.label});
 }

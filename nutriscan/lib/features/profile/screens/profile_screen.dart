@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/providers/user_profile_provider.dart';
+import '../../../core/services/safety_score_service.dart';
+import '../../scanner/models/scan_result_model.dart';
+import '../../auth/providers/auth_provider.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({super.key});
@@ -71,11 +74,25 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         body: Center(child: Text('Error: $e')),
       ),
       data: (profile) {
-        // Sync controller text once after first load
         if (!_controllerInit) {
           _nameController.text = profile.displayName;
           _controllerInit = true;
         }
+
+        // ── LIVE PREVIEW SCORE ───────────────────────────────────────────────
+        // Calculate a score for a "Generic Cereal" mock to show impact
+        final mockIngredients = [
+          const IngredientItem(name: 'Whole Grain Wheat'),
+          const IngredientItem(name: 'Sugar', isFlagged: true),
+          const IngredientItem(name: 'Peanuts', isFlagged: false),
+          const IngredientItem(name: 'Salt'),
+        ];
+        
+        final personalisedScore = SafetyScoreService.computePersonalisedScore(
+          ingredients: mockIngredients,
+          nova: NovaGroup.group3,
+          profile: profile,
+        ).finalScore;
 
         return Scaffold(
           backgroundColor: AppColors.cream,
@@ -88,7 +105,84 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const SizedBox(height: 24),
+                        const SizedBox(height: 16),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Health Profile',
+                              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                                color: AppColors.darkGreen,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.logout_rounded, color: AppColors.flaggedRed),
+                              onPressed: () {
+                                ref.read(authProvider.notifier).signOut();
+                              },
+                              tooltip: 'Log Out',
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        // Score Preview Ring
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(20),
+                          decoration: BoxDecoration(
+                            color: AppColors.darkGreen,
+                            borderRadius: BorderRadius.circular(24),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppColors.darkGreen.withOpacity(0.3),
+                                blurRadius: 15,
+                                offset: const Offset(0, 8),
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            children: [
+                              _PreviewGauge(score: personalisedScore),
+                              const SizedBox(width: 20),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'LIVE PREVIEW',
+                                      style: TextStyle(
+                                        color: Colors.white60,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w700,
+                                        letterSpacing: 1.2,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    const Text(
+                                      'Personal Impact',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'How this profile affects a standard cereal product.',
+                                      style: TextStyle(
+                                        color: Colors.white.withOpacity(0.7),
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        const SizedBox(height: 32),
                         Text(
                           'HEALTH PROFILE',
                           style: Theme.of(context).textTheme.labelSmall?.copyWith(
@@ -108,7 +202,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         ),
                         const SizedBox(height: 24),
 
-                        // Display name
                         _SectionLabel(label: 'Display name'),
                         const SizedBox(height: 8),
                         TextField(
@@ -120,7 +213,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         ),
                         const SizedBox(height: 24),
 
-                        // Allergies
                         _SectionLabel(label: 'Allergies'),
                         const SizedBox(height: 10),
                         _ChipGroup(
@@ -131,7 +223,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         ),
                         const SizedBox(height: 24),
 
-                        // Chronic conditions
                         _SectionLabel(label: 'Chronic conditions'),
                         const SizedBox(height: 10),
                         _ChipGroup(
@@ -142,7 +233,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         ),
                         const SizedBox(height: 24),
 
-                        // Dietary goals
                         _SectionLabel(label: 'Dietary goals'),
                         const SizedBox(height: 10),
                         _ChipGroup(
@@ -157,7 +247,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   ),
                 ),
 
-                // Save button
                 Padding(
                   padding: EdgeInsets.only(
                     left: 20,
@@ -211,6 +300,49 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           ),
         );
       },
+    );
+  }
+}
+
+class _PreviewGauge extends StatelessWidget {
+  final int score;
+  const _PreviewGauge({required this.score});
+
+  @override
+  Widget build(BuildContext context) {
+    Color color = AppColors.safeGreen;
+    if (score < 40) color = AppColors.flaggedRed;
+    else if (score < 70) color = AppColors.cautionAmber;
+
+    return SizedBox(
+      width: 70,
+      height: 70,
+      child: Stack(
+        children: [
+          Center(
+            child: SizedBox(
+              width: 70,
+              height: 70,
+              child: CircularProgressIndicator(
+                value: score / 100,
+                strokeWidth: 8,
+                backgroundColor: Colors.white12,
+                valueColor: AlwaysStoppedAnimation<Color>(color),
+              ),
+            ),
+          ),
+          Center(
+            child: Text(
+              '$score',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

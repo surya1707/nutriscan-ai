@@ -3,7 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:camera/camera.dart';
+import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
+import 'package:flutter/foundation.dart';
+import '../services/realtime_ocr_service.dart';
+import '../models/annotated_block.dart';
+import '../widgets/ar_overlay_painter.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/providers/scan_provider.dart';
@@ -18,84 +23,225 @@ class ScannerScreen extends ConsumerStatefulWidget {
   ConsumerState<ScannerScreen> createState() => _ScannerScreenState();
 }
 
-class _ScannerScreenState extends ConsumerState<ScannerScreen> {
-  MobileScannerController? _scanController;
+class _ScannerScreenState extends ConsumerState<ScannerScreen>
+    with WidgetsBindingObserver {
+
+  CameraController? _ctrl;
+  final _realtimeOcrService = RealtimeOcrService();
+  final _barcodeScanner = BarcodeScanner();
+  bool _arOverlayEnabled = false;
+  List<AnnotatedBlock> _arBlocks = [];
+  bool _isProcessingBarcode = false;
+  Size _imageSize = Size.zero;
+
   bool _permissionGranted = false;
   bool _checkingPermission = true;
   bool _torchOn = false;
-  bool _isProcessing = false;
+
+  // Debounce: ignore repeated detections within 3 s
+  DateTime? _lastDetect;
+  // True while gallery/capture processing is running
+  bool _galleryBusy = false;
+  // One-shot hook for gallery barcode capture
+  void Function(String)? _onNextBarcode;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _realtimeOcrService.initialize();
+    _realtimeOcrService.arStream.listen((blocks) {
+      if (mounted && _arOverlayEnabled) {
+        setState(() => _arBlocks = blocks);
+      }
+    });
     _checkPermission();
   }
+
+
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Resume scanner when returning from Settings
+    if (state == AppLifecycleState.resumed && _permissionGranted) {
+      
+      if (_ctrl != null && !_ctrl!.value.isStreamingImages) {
+        _startCameraStream();
+      }
+    }
+  }
+
+  // ── Permission ────────────────────────────────────────────────────────────────
 
   Future<void> _checkPermission() async {
     final status = await Permission.camera.request();
     final granted = status == PermissionStatus.granted;
-    if (mounted) {
-      setState(() {
-        _permissionGranted = granted;
-        _checkingPermission = false;
-      });
-      if (granted) _initScanner();
+    if (!mounted) return;
+    setState(() {
+      _permissionGranted = granted;
+      _checkingPermission = false;
+    });
+    if (granted) _initScanner();
+  }
+
+  Future<void> _initScanner() async {
+    if (kIsWeb) return; // Web fallback handled in build
+    try {
+      final cameras = await availableCameras();
+      final backCamera = cameras.firstWhere(
+        (c) => c.lensDirection == CameraLensDirection.back,
+        orElse: () => cameras.first,
+      );
+      
+      final controller = CameraController(
+        backCamera, 
+        ResolutionPreset.high,
+        enableAudio: false,
+        imageFormatGroup: Platform.isAndroid ? ImageFormatGroup.nv21 : ImageFormatGroup.bgra8888,
+      );
+      
+      await controller.initialize();
+      if (!mounted) return;
+      
+      setState(() => _ctrl = controller);
+      _startCameraStream();
+    } catch (e) {
+      debugPrint('Camera init error: $e');
     }
   }
 
-  void _initScanner() {
-    setState(() {
-      _scanController = MobileScannerController(
-        detectionSpeed: DetectionSpeed.normal,
-        facing: CameraFacing.back,
-        formats: const [
-          BarcodeFormat.ean13,
-          BarcodeFormat.ean8,
-          BarcodeFormat.upcA,
-          BarcodeFormat.upcE,
-          BarcodeFormat.code128,
-          BarcodeFormat.code39,
-          BarcodeFormat.qrCode,
-        ],
-        returnImage: false,
-      );
+  void _startCameraStream() {
+    _ctrl?.startImageStream((image) {
+      final inputImage = _inputImageFromCameraImage(image);
+      if (inputImage == null) return;
+      
+      _imageSize = Size(image.width.toDouble(), image.height.toDouble());
+
+      if (!_isProcessingBarcode) {
+        _processBarcodeLive(inputImage);
+      }
+      
+      if (_arOverlayEnabled) {
+        _realtimeOcrService.processImage(inputImage);
+      } else if (_arBlocks.isNotEmpty) {
+        setState(() => _arBlocks = []);
+      }
     });
   }
 
-  @override
-  void dispose() {
-    _scanController?.dispose();
-    super.dispose();
+  InputImage? _inputImageFromCameraImage(CameraImage image) {
+    if (_ctrl == null) return null;
+    final camera = _ctrl!.description;
+    final sensorOrientation = camera.sensorOrientation;
+    
+    InputImageRotation? rotation = InputImageRotationValue.fromRawValue(sensorOrientation);
+    if (rotation == null) return null;
+
+    final format = InputImageFormatValue.fromRawValue(image.format.raw);
+    if (format == null || (Platform.isAndroid && format != InputImageFormat.nv21) || (Platform.isIOS && format != InputImageFormat.bgra8888)) {
+      return null;
+    }
+
+    if (image.planes.isEmpty) return null;
+    
+    final bytes = Platform.isAndroid 
+        ? image.planes.first.bytes 
+        : Uint8List.fromList(image.planes.expand((plane) => plane.bytes).toList());
+
+    return InputImage.fromBytes(
+      bytes: bytes,
+      metadata: InputImageMetadata(
+        size: Size(image.width.toDouble(), image.height.toDouble()),
+        rotation: rotation,
+        format: format,
+        bytesPerRow: image.planes.first.bytesPerRow,
+      ),
+    );
   }
 
-  // ── Barcode detected ─────────────────────────────────────────────────────────
-
-  void _onDetect(BarcodeCapture capture) async {
-    if (_isProcessing) return;
-    final barcode = capture.barcodes.firstOrNull?.rawValue;
-    if (barcode == null || barcode.isEmpty) return;
-    _isProcessing = true;
-    await ref.read(scanProvider.notifier).onBarcodeDetected(barcode);
+  Future<void> _processBarcodeLive(InputImage image) async {
+    _isProcessingBarcode = true;
+    try {
+      final barcodes = await _barcodeScanner.processImage(image);
+      if (barcodes.isNotEmpty) {
+        final barcode = barcodes.first.rawValue;
+        if (barcode != null && barcode.isNotEmpty) {
+          final now = DateTime.now();
+          if (_lastDetect == null || now.difference(_lastDetect!) > const Duration(seconds: 3)) {
+             _lastDetect = now;
+             await ref.read(scanProvider.notifier).onBarcodeDetected(barcode);
+          }
+        }
+      }
+    } finally {
+      _isProcessingBarcode = false;
+    }
   }
 
-  // ── Gallery / OCR path ───────────────────────────────────────────────────────
+  // ── Live barcode detection ────────────────────────────────────────────────────
+
+
+  // ── Shutter / Capture button ─────────────────────────────────────────────────
+  // Uses ImagePicker(camera) → try barcode → fall back to OCR.
+  // This is the most reliable path on devices where continuous scan struggles.
+
+  Future<void> _capturePhoto() async {
+    if (_galleryBusy) return;
+    setState(() => _galleryBusy = true);
+
+    try {
+      final picker = ImagePicker();
+      final picked = await picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 90,
+        preferredCameraDevice: CameraDevice.rear,
+      );
+      if (picked == null || !mounted) return;
+
+      _showProcessingSnackbar('Analysing photo…');
+      await _processImageFile(File(picked.path));
+    } finally {
+      if (mounted) setState(() => _galleryBusy = false);
+    }
+  }
+
+  // ── Gallery button ────────────────────────────────────────────────────────────
 
   Future<void> _pickFromGallery() async {
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(source: ImageSource.gallery);
-    if (picked == null || !mounted) return;
+    if (_galleryBusy) return;
+    setState(() => _galleryBusy = true);
 
-    await _scanController?.stop();
-    _showProcessingSnackbar('Running OCR on label…');
+    try {
+      final picker = ImagePicker();
+      final picked =
+          await picker.pickImage(source: ImageSource.gallery, imageQuality: 90);
+      if (picked == null || !mounted) return;
 
-    final result = await extractFromLabelImage(File(picked.path));
+      _showProcessingSnackbar('Analysing image…');
+      await _processImageFile(File(picked.path));
+    } finally {
+      if (mounted) setState(() => _galleryBusy = false);
+    }
+  }
+
+  // ── Shared image processing: barcode first → OCR fallback ────────────────────
+
+  Future<void> _processImageFile(File file) async {
+    // With image picker, we just directly do OCR
     if (!mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    _showProcessingSnackbar('Reading ingredient label via OCR…');
+
+    final result = await extractFromLabelImage(file);
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
 
     if (result != null) {
       ref.read(scanProvider.notifier).onOcrResult(result);
     } else {
-      _showErrorSnackbar('Could not extract ingredients from image.');
-      await _scanController?.start();
+      _showErrorSnackbar(
+          'Could not read this image. Try "Type" to paste the ingredient list.');
     }
   }
 
@@ -118,34 +264,34 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
     );
   }
 
+  // ── Snackbars ─────────────────────────────────────────────────────────────────
+
   void _showProcessingSnackbar(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(children: [
-          const SizedBox(
-            width: 18,
-            height: 18,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Text(msg),
-        ]),
-        duration: const Duration(seconds: 10),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Row(children: [
+        const SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+        ),
+        const SizedBox(width: 12),
+        Flexible(child: Text(msg)),
+      ]),
+      duration: const Duration(seconds: 15),
+      behavior: SnackBarBehavior.floating,
+    ));
   }
 
   void _showErrorSnackbar(String msg) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(
         content: Text(msg),
         backgroundColor: AppColors.flaggedRed,
         behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ));
   }
 
@@ -153,66 +299,127 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Listen for scan state changes
-    ref.listen<ScanState>(scanProvider, (_, next) async {
+    ref.listen<ScanState>(scanProvider, (_, next) {
       if (next.status == ScanStatus.found && next.result != null) {
+        _lastDetect = null;
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ref.read(scanProvider.notifier).reset();
         if (mounted) context.push('/results', extra: next.result);
       } else if (next.status == ScanStatus.notFound) {
-        _showErrorSnackbar('Product not found in database. Try "Type" or gallery.');
-        await _scanController?.start();
+        _lastDetect = null;
+        _showErrorSnackbar(
+            'Product not in database. Try the "Capture" button or paste ingredients.');
       } else if (next.status == ScanStatus.error) {
-        _showErrorSnackbar(next.errorMessage ?? 'Scan failed.');
-        await _scanController?.start();
+        _lastDetect = null;
+        _showErrorSnackbar(next.errorMessage ?? 'Scan failed. Please try again.');
       }
     });
 
-    final scanState = ref.watch(scanProvider);
+    final isLoading = ref.watch(scanProvider).status == ScanStatus.loading;
 
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // ── Camera feed or placeholder ──────────────────────────────
           _buildCameraLayer(),
-
-          // ── Dark overlay with viewfinder cutout ─────────────────────
           _buildOverlay(context),
-
-          // ── Top bar ─────────────────────────────────────────────────
           _buildTopBar(context),
-
-          // ── Loading overlay ──────────────────────────────────────────
-          if (scanState.status == ScanStatus.loading)
-            _buildLoadingOverlay(),
-
-          // ── Bottom action sheet ──────────────────────────────────────
+          if (isLoading) _buildLoadingOverlay(),
           Positioned(
             bottom: 0,
             left: 0,
             right: 0,
-            child: _buildBottomSheet(context),
+            child: _buildBottomSheet(context, isLoading),
           ),
         ],
       ),
     );
   }
 
+  // ── Layer builders ─────────────────────────────────────────────────────────
+
   Widget _buildCameraLayer() {
+    if (kIsWeb) {
+      return Container(
+        color: AppColors.background,
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.web, size: 64, color: AppColors.primary),
+                const SizedBox(height: 16),
+                const Text(
+                  'Web Scanner Mode',
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Camera AR is only available on Mobile.',
+                  style: TextStyle(color: AppColors.textSecondary),
+                ),
+                const SizedBox(height: 32),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    // TODO: Implement image upload and pass to backend OCR
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Image OCR coming soon! Use manual text for now.')),
+                    );
+                  },
+                  icon: const Icon(Icons.upload_file),
+                  label: const Text('Upload Label Image'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    _showManualTextDialog();
+                  },
+                  icon: const Icon(Icons.edit_note),
+                  label: const Text('Enter Ingredients Manually'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: AppColors.primary,
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                    side: const BorderSide(color: AppColors.primary),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
     if (_checkingPermission) {
-      return const Center(child: CircularProgressIndicator(color: Colors.white));
+      return const Center(
+          child: CircularProgressIndicator(color: Colors.white));
     }
     if (!_permissionGranted) {
       return _NoCameraPermissionView(onRetry: _checkPermission);
     }
-    if (_scanController == null) {
+    if (_ctrl == null || !_ctrl!.value.isInitialized) {
       return Container(color: const Color(0xFF1A2820));
     }
-    return MobileScanner(
-      controller: _scanController!,
-      onDetect: _onDetect,
+    
+    // Calculate rotation enum for AR Painter
+    final sensorOrientation = _ctrl!.description.sensorOrientation;
+    InputImageRotation rotation = InputImageRotationValue.fromRawValue(sensorOrientation) ?? InputImageRotation.rotation90deg;
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        CameraPreview(_ctrl!),
+        if (_arOverlayEnabled && _arBlocks.isNotEmpty)
+          CustomPaint(
+            painter: AROverlayPainter(_arBlocks, _imageSize, rotation),
+          ),
+      ],
     );
   }
 
@@ -220,40 +427,71 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
     final size = MediaQuery.of(context).size;
     final boxSize = size.width * 0.72;
     return CustomPaint(
-      painter: _ScanOverlayPainter(
-        boxSize: boxSize,
-        screenSize: size,
-      ),
-    );
+        painter: _ScanOverlayPainter(boxSize: boxSize, screenSize: size));
   }
 
   Widget _buildTopBar(BuildContext context) {
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        child: Column(
           children: [
-            _CircleButton(
-              icon: Icons.arrow_back_ios_new_rounded,
-              onTap: () => context.canPop() ? context.pop() : context.go('/'),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _CircleButton(
+                  icon: Icons.arrow_back_ios_new_rounded,
+                  onTap: () =>
+                      context.canPop() ? context.pop() : context.go('/'),
+                ),
+                const Text(
+                  'NutriScan',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    shadows: [Shadow(blurRadius: 8, color: Colors.black54)],
+                  ),
+                ),
+                Row(
+                  children: [
+                    _CircleButton(
+                      icon: _arOverlayEnabled ? Icons.visibility_rounded : Icons.visibility_off_rounded,
+                      onTap: () => setState(() => _arOverlayEnabled = !_arOverlayEnabled),
+                    ),
+                    const SizedBox(width: 8),
+                    _CircleButton(
+                      icon: _torchOn
+                          ? Icons.flash_on_rounded
+                          : Icons.flash_off_rounded,
+                      onTap: () {
+                        setState(() => _torchOn = !_torchOn);
+                        _ctrl?.setFlashMode(_torchOn ? FlashMode.torch : FlashMode.off);
+                      },
+                    ),
+                  ],
+                ),
+              ],
             ),
-            const Text(
-              'Scan Barcode or Label',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                shadows: [Shadow(blurRadius: 8, color: Colors.black54)],
+            if (_arOverlayEnabled)
+              Padding(
+                padding: const EdgeInsets.only(top: 16),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: AppColors.darkGreen.withOpacity(0.8),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.auto_awesome, color: Colors.amber, size: 16),
+                      SizedBox(width: 6),
+                      Text('Live AR Analysis', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                ),
               ),
-            ),
-            _CircleButton(
-              icon: _torchOn ? Icons.flash_on_rounded : Icons.flash_off_rounded,
-              onTap: () {
-                setState(() => _torchOn = !_torchOn);
-                _scanController?.toggleTorch();
-              },
-            ),
           ],
         ),
       ),
@@ -269,21 +507,25 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
           children: [
             CircularProgressIndicator(color: Colors.white),
             SizedBox(height: 16),
-            Text(
-              'Looking up product…',
-              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500),
-            ),
+            Text('Looking up product…',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500)),
+            SizedBox(height: 6),
+            Text('Checking Open Food Facts',
+                style: TextStyle(color: Colors.white60, fontSize: 13)),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildBottomSheet(BuildContext context) {
+  Widget _buildBottomSheet(BuildContext context, bool isLoading) {
     return Container(
       decoration: const BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       padding: EdgeInsets.only(
         top: 20,
@@ -295,48 +537,70 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
-            'Point camera at a barcode or ingredient label',
+            'Auto-scans barcodes · or tap capture to scan manually',
             textAlign: TextAlign.center,
-            style: TextStyle(color: AppColors.textSecondary, fontSize: 13, height: 1.4),
+            style: TextStyle(
+                color: AppColors.textSecondary, fontSize: 12, height: 1.4),
           ),
           const SizedBox(height: 20),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
+              // Type button
               _BottomActionButton(
                 icon: Icons.edit_outlined,
                 label: 'Type',
-                onTap: _showTypeDialog,
+                onTap: isLoading ? null : _showTypeDialog,
               ),
-              // Centre big scan-ring button (decorative — scanner is always active)
+
+              // ── Centre shutter button (primary CTA) ──────────────────────
               GestureDetector(
-                onTap: () {},
-                child: Container(
-                  width: 68,
-                  height: 68,
+                onTap: isLoading ? null : _capturePhoto,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: 76,
+                  height: 76,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    border: Border.all(color: AppColors.mediumGreen, width: 2.5),
+                    color: isLoading
+                        ? AppColors.mediumGreen.withOpacity(0.4)
+                        : AppColors.darkGreen,
+                    boxShadow: isLoading
+                        ? null
+                        : [
+                            BoxShadow(
+                              color: AppColors.darkGreen.withOpacity(0.4),
+                              blurRadius: 20,
+                              spreadRadius: 2,
+                            ),
+                          ],
                   ),
-                  child: Center(
-                    child: Container(
-                      width: 52,
-                      height: 52,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: AppColors.lightGreen.withOpacity(0.45),
-                      ),
-                      child: ScanViewfinder(size: 32),
-                    ),
-                  ),
+                  child: isLoading
+                      ? const Center(
+                          child: SizedBox(
+                              width: 28,
+                              height: 28,
+                              child: CircularProgressIndicator(
+                                  color: Colors.white, strokeWidth: 2.5)))
+                      : const Icon(Icons.camera_alt_rounded,
+                          color: Colors.white, size: 34),
                 ),
               ),
+
+              // Gallery button
               _BottomActionButton(
                 icon: Icons.image_outlined,
                 label: 'Gallery',
-                onTap: _pickFromGallery,
+                onTap: isLoading ? null : _pickFromGallery,
               ),
             ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '📷 Tap camera button to capture & scan',
+            style: TextStyle(
+                color: AppColors.textMuted, fontSize: 11, height: 1.4),
           ),
         ],
       ),
@@ -344,13 +608,14 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
   }
 }
 
-// ── Type input sheet ──────────────────────────────────────────────────────────
+// ── Type input bottom sheet ───────────────────────────────────────────────────
 
 class _TypeIngredientSheet extends StatelessWidget {
   final TextEditingController controller;
   final ValueChanged<String> onSubmit;
 
-  const _TypeIngredientSheet({required this.controller, required this.onSubmit});
+  const _TypeIngredientSheet(
+      {required this.controller, required this.onSubmit});
 
   @override
   Widget build(BuildContext context) {
@@ -369,31 +634,28 @@ class _TypeIngredientSheet extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Paste ingredient list',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textPrimary,
-            ),
-          ),
+          const Text('Paste ingredient list',
+              style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary)),
           const SizedBox(height: 6),
-          Text(
-            'Copy the ingredient text from the back of the package',
-            style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
-          ),
+          const Text(
+              'Copy the ingredient text from the back of the package',
+              style:
+                  TextStyle(color: AppColors.textSecondary, fontSize: 13)),
           const SizedBox(height: 16),
           TextField(
             controller: controller,
             maxLines: 6,
             autofocus: true,
             decoration: InputDecoration(
-              hintText: 'e.g. Water, Sugar, Modified Starch, Citric Acid…',
-              hintStyle: TextStyle(color: AppColors.textMuted, fontSize: 13),
+              hintText: 'e.g. Sugar, Fruit Pulp, Citric Acid, Pectin…',
+              hintStyle:
+                  const TextStyle(color: AppColors.textMuted, fontSize: 13),
               border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: AppColors.divider),
-              ),
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: AppColors.divider)),
             ),
           ),
           const SizedBox(height: 16),
@@ -409,13 +671,11 @@ class _TypeIngredientSheet extends StatelessWidget {
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
+                    borderRadius: BorderRadius.circular(14)),
               ),
-              child: const Text(
-                'Analyse Ingredients',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-              ),
+              child: const Text('Analyse Ingredients',
+                  style: TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.w600)),
             ),
           ),
         ],
@@ -424,10 +684,9 @@ class _TypeIngredientSheet extends StatelessWidget {
   }
 }
 
-// ── Helper to build result from typed text ────────────────────────────────────
+// ── Build result from typed text ──────────────────────────────────────────────
 
 ScanResult buildResultFromText(String text) {
-  // Reuse the OCR-based extraction logic
   const flagged = <String, String>{
     'high-fructose corn syrup': 'Linked to metabolic disorders',
     'hfcs': 'High-fructose corn syrup',
@@ -447,21 +706,38 @@ ScanResult buildResultFromText(String text) {
     'red 40': 'Synthetic dye',
     'yellow 5': 'Synthetic dye',
     'yellow 6': 'Synthetic dye',
+    'sugar': 'Primary ingredient — high sugar content',
+    'corn syrup': 'High-sugar sweetener',
+    'glucose syrup': 'High-glycemic sweetener',
+    'dextrose': 'Added sugar',
+    'maltose': 'Added sugar',
+    'fructose': 'Added sugar',
   };
 
-  final parts = text.split(RegExp(r'[,;]')).map((s) => s.trim()).where((s) => s.length > 1).toList();
+  final parts = text
+      .split(RegExp(r'[,;]'))
+      .map((s) => s.trim())
+      .where((s) => s.length > 1)
+      .toList();
+
   final ingredients = parts.map((ingredient) {
     final lower = ingredient.toLowerCase();
     String? reason;
     for (final e in flagged.entries) {
-      if (lower.contains(e.key)) { reason = e.value; break; }
+      if (lower.contains(e.key)) {
+        reason = e.value;
+        break;
+      }
     }
-    return IngredientItem(name: ingredient, isFlagged: reason != null, flagReason: reason);
+    return IngredientItem(
+        name: ingredient, isFlagged: reason != null, flagReason: reason);
   }).toList();
 
-  // NOVA estimate
   final lower = text.toLowerCase();
-  const markers = ['syrup', 'flavor', 'colour', 'modified starch', 'preservative', 'emulsifier'];
+  const markers = [
+    'syrup', 'flavor', 'colour', 'modified starch',
+    'preservative', 'emulsifier', 'sugar', 'glucose',
+  ];
   final hits = markers.where((m) => lower.contains(m)).length;
   final nova = hits >= 3
       ? NovaGroup.group4
@@ -475,28 +751,35 @@ ScanResult buildResultFromText(String text) {
   else if (nova == NovaGroup.group3) score -= 15;
   score -= (flaggedCount * 8).clamp(0, 25).toDouble();
 
+  // Extra penalty if sugar is the first/primary ingredient
+  final firstIngredient = parts.isNotEmpty ? parts.first.toLowerCase() : '';
+  if (firstIngredient.contains('sugar') ||
+      firstIngredient.contains('glucose') ||
+      firstIngredient.contains('syrup')) {
+    score -= 15;
+  }
+
   return ScanResult(
     productName: 'Typed Ingredients',
     brand: 'Manual Entry',
     healthScore: score.round().clamp(0, 100),
     novaGroup: nova,
     nutrients: const [
-      NutrientInfo(name: 'Calories', value: '—', unit: 'kcal', level: NutritionLevel.moderate),
-      NutrientInfo(name: 'Sugar', value: '—', unit: 'g', level: NutritionLevel.moderate),
-      NutrientInfo(name: 'Fat', value: '—', unit: 'g', level: NutritionLevel.moderate),
-      NutrientInfo(name: 'Sodium', value: '—', unit: 'mg', level: NutritionLevel.moderate),
+      NutrientInfo(name: 'Calories', value: '—', unit: 'kcal', level: NutritionLevel.unknown),
+      NutrientInfo(name: 'Sugar', value: '—', unit: 'g', level: NutritionLevel.unknown),
+      NutrientInfo(name: 'Fat', value: '—', unit: 'g', level: NutritionLevel.unknown),
+      NutrientInfo(name: 'Sodium', value: '—', unit: 'mg', level: NutritionLevel.unknown),
     ],
     ingredients: ingredients,
     alternatives: const [],
   );
 }
 
-// ── Shared small widgets ──────────────────────────────────────────────────────
+// ── Small reusable widgets ────────────────────────────────────────────────────
 
 class _CircleButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback onTap;
-
   const _CircleButton({required this.icon, required this.onTap});
 
   @override
@@ -507,9 +790,7 @@ class _CircleButton extends StatelessWidget {
         width: 40,
         height: 40,
         decoration: BoxDecoration(
-          color: Colors.black38,
-          borderRadius: BorderRadius.circular(20),
-        ),
+            color: Colors.black38, borderRadius: BorderRadius.circular(20)),
         child: Icon(icon, color: Colors.white, size: 20),
       ),
     );
@@ -519,110 +800,98 @@ class _CircleButton extends StatelessWidget {
 class _BottomActionButton extends StatelessWidget {
   final IconData icon;
   final String label;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
-  const _BottomActionButton({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
+  const _BottomActionButton(
+      {required this.icon, required this.label, this.onTap});
 
   @override
   Widget build(BuildContext context) {
+    final disabled = onTap == null;
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
-        decoration: BoxDecoration(
-          color: AppColors.lightGreen.withOpacity(0.5),
-          borderRadius: BorderRadius.circular(30),
-          border: Border.all(color: AppColors.divider, width: 0.5),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 18, color: AppColors.darkGreen),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-                color: AppColors.darkGreen,
-              ),
-            ),
-          ],
+      child: Opacity(
+        opacity: disabled ? 0.4 : 1.0,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+          decoration: BoxDecoration(
+            color: AppColors.lightGreen.withOpacity(0.5),
+            borderRadius: BorderRadius.circular(30),
+            border: Border.all(color: AppColors.divider, width: 0.5),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 18, color: AppColors.darkGreen),
+              const SizedBox(width: 6),
+              Text(label,
+                  style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.darkGreen)),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-// ── Scan overlay painter ──────────────────────────────────────────────────────
+// ── Overlay painter ───────────────────────────────────────────────────────────
 
 class _ScanOverlayPainter extends CustomPainter {
   final double boxSize;
   final Size screenSize;
-
   const _ScanOverlayPainter({required this.boxSize, required this.screenSize});
 
   @override
   void paint(Canvas canvas, Size size) {
     const cornerLen = 28.0;
-    const cornerRadius = 6.0;
-    const cornerStroke = 3.5;
+    const cornerR = 6.0;
+    const stroke = 3.5;
 
     final cx = size.width / 2;
     final cy = size.height * 0.42;
     final half = boxSize / 2;
+    final l = cx - half, t = cy - half, r = cx + half, b = cy + half;
 
-    final left = cx - half;
-    final top = cy - half;
-    final right = cx + half;
-    final bottom = cy + half;
+    final dark = Paint()..color = Colors.black.withOpacity(0.62);
+    canvas.drawRect(Rect.fromLTRB(0, 0, size.width, t), dark);
+    canvas.drawRect(Rect.fromLTRB(0, b, size.width, size.height), dark);
+    canvas.drawRect(Rect.fromLTRB(0, t, l, b), dark);
+    canvas.drawRect(Rect.fromLTRB(r, t, size.width, b), dark);
 
-    // Dark overlay (two rects above and below, full width sides)
-    final overlayPaint = Paint()..color = Colors.black.withOpacity(0.62);
-    // top
-    canvas.drawRect(Rect.fromLTRB(0, 0, size.width, top), overlayPaint);
-    // bottom
-    canvas.drawRect(Rect.fromLTRB(0, bottom, size.width, size.height), overlayPaint);
-    // left
-    canvas.drawRect(Rect.fromLTRB(0, top, left, bottom), overlayPaint);
-    // right
-    canvas.drawRect(Rect.fromLTRB(right, top, size.width, bottom), overlayPaint);
-
-    // Corner brackets
-    final cornerPaint = Paint()
+    final paint = Paint()
       ..color = Colors.white
-      ..strokeWidth = cornerStroke
+      ..strokeWidth = stroke
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
 
-    void drawCorner(double x, double y, double dx, double dy) {
-      final path = Path()
-        ..moveTo(x + dx * cornerLen, y)
-        ..lineTo(x, y)
-        ..lineTo(x, y + dy * cornerLen);
-      canvas.drawPath(path, cornerPaint);
+    void corner(double x, double y, double dx, double dy) {
+      canvas.drawPath(
+        Path()
+          ..moveTo(x + dx * cornerLen, y)
+          ..lineTo(x, y)
+          ..lineTo(x, y + dy * cornerLen),
+        paint,
+      );
     }
 
-    drawCorner(left + cornerRadius, top + cornerRadius, 1, 1);
-    drawCorner(right - cornerRadius, top + cornerRadius, -1, 1);
-    drawCorner(left + cornerRadius, bottom - cornerRadius, 1, -1);
-    drawCorner(right - cornerRadius, bottom - cornerRadius, -1, -1);
+    corner(l + cornerR, t + cornerR, 1, 1);
+    corner(r - cornerR, t + cornerR, -1, 1);
+    corner(l + cornerR, b - cornerR, 1, -1);
+    corner(r - cornerR, b - cornerR, -1, -1);
   }
 
   @override
-  bool shouldRepaint(_ScanOverlayPainter old) =>
-      old.boxSize != boxSize || old.screenSize != screenSize;
+  bool shouldRepaint(_ScanOverlayPainter o) =>
+      o.boxSize != boxSize || o.screenSize != screenSize;
 }
 
 // ── No permission view ────────────────────────────────────────────────────────
 
 class _NoCameraPermissionView extends StatelessWidget {
   final VoidCallback onRetry;
-
   const _NoCameraPermissionView({required this.onRetry});
 
   @override
@@ -633,45 +902,39 @@ class _NoCameraPermissionView extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.camera_alt_outlined, color: Colors.white54, size: 56),
+            const Icon(Icons.camera_alt_outlined,
+                color: Colors.white54, size: 56),
             const SizedBox(height: 20),
-            const Text(
-              'Camera access required',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
+            const Text('Camera access required',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700)),
             const SizedBox(height: 10),
             const Text(
-              'NutriScan needs camera access to scan barcodes and ingredient labels.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white60, fontSize: 14, height: 1.5),
-            ),
+                'NutriScan needs camera access to scan barcodes and ingredient labels.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: Colors.white60, fontSize: 14, height: 1.5)),
             const SizedBox(height: 28),
             ElevatedButton.icon(
-              onPressed: () async {
-                await openAppSettings();
-              },
+              onPressed: openAppSettings,
               icon: const Icon(Icons.settings_outlined),
               label: const Text('Open Settings'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.mediumGreen,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 24, vertical: 14),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
+                    borderRadius: BorderRadius.circular(14)),
               ),
             ),
             const SizedBox(height: 12),
             TextButton(
               onPressed: onRetry,
-              child: const Text(
-                'Try again',
-                style: TextStyle(color: Colors.white70),
-              ),
+              child: const Text('Try again',
+                  style: TextStyle(color: Colors.white70)),
             ),
           ],
         ),

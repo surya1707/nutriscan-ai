@@ -7,6 +7,8 @@ import 'tables.dart';
 import 'scan_history_dao.dart';
 import 'user_profile_dao.dart';
 
+import 'connection.dart' as impl;
+
 part 'app_database.g.dart';
 
 @DriftDatabase(
@@ -14,16 +16,8 @@ part 'app_database.g.dart';
   daos: [ScanHistoryDao, UserProfileDao],
 )
 class AppDatabase extends _$AppDatabase {
-  AppDatabase() : super(_openConnection());
+  AppDatabase() : super(impl.openConnection());
 
   @override
   int get schemaVersion => 1;
-}
-
-LazyDatabase _openConnection() {
-  return LazyDatabase(() async {
-    final dir = await getApplicationDocumentsDirectory();
-    final file = File(p.join(dir.path, 'nutriscan.db'));
-    return NativeDatabase.createInBackground(file);
-  });
 }

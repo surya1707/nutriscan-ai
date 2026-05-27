@@ -15,6 +15,12 @@ class ScanHistoryDao extends DatabaseAccessor<AppDatabase>
             ..orderBy([(t) => OrderingTerm.desc(t.scannedAt)]))
           .watch();
 
+  /// Get all scans once (for sync).
+  Future<List<ScanHistoryTableData>> getAll() =>
+      (select(scanHistoryTable)
+            ..orderBy([(t) => OrderingTerm.desc(t.scannedAt)]))
+          .get();
+
   /// Insert or replace a scan.
   Future<void> upsertScan(ScanHistoryTableCompanion entry) =>
       into(scanHistoryTable).insertOnConflictUpdate(entry);

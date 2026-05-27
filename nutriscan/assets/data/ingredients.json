@@ -1,0 +1,23 @@
+{
+  "safe": [
+    "water", "salt", "sugar", "oats", "wheat", "rice", "corn",
+    "milk", "cream", "butter", "cheese", "eggs", "flour",
+    "yeast", "honey", "maple syrup", "olive oil", "sunflower oil",
+    "cocoa", "vanilla", "cinnamon", "garlic", "onion", "pepper",
+    "vinegar", "lemon juice", "citric acid", "pectin", "baking soda",
+    "cornstarch", "potato starch", "tapioca starch"
+  ],
+  "caution": [
+    "maltodextrin", "dextrose", "fructose", "soy lecithin",
+    "guar gum", "xanthan gum", "carrageenan", "locust bean gum",
+    "natural flavors", "artificial flavors", "sucralose", "aspartame",
+    "erythritol", "xylitol", "sorbitol", "palm oil", "canola oil"
+  ],
+  "danger": [
+    "high fructose corn syrup", "hydrogenated oils", "partially hydrogenated oils",
+    "trans fat", "msg", "monosodium glutamate", "sodium nitrite",
+    "sodium nitrate", "bha", "bht", "tbhq", "potassium bromate",
+    "azodicarbonamide", "red 40", "yellow 5", "yellow 6", "blue 1",
+    "blue 2", "green 3", "caramel color"
+  ]
+}

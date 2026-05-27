@@ -1,6 +1,11 @@
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../features/scanner/models/scan_result_model.dart';
 import '../services/open_food_facts_service.dart';
+import '../services/safety_score_service.dart';
+import '../config/app_config.dart';
+import '../../data/providers/api_provider.dart';
+import 'user_profile_provider.dart';
 
 // ── Scanner scan state ────────────────────────────────────────────────────────
 
@@ -37,13 +42,42 @@ class ScanState {
 // ── Notifier ──────────────────────────────────────────────────────────────────
 
 class ScanNotifier extends StateNotifier<ScanState> {
-  ScanNotifier() : super(const ScanState());
+  final Ref _ref;
+
+  ScanNotifier(this._ref) : super(const ScanState());
 
   bool _processing = false;
 
+  /// Personalises a raw scan result using the current user profile.
+  ScanResult _personalise(ScanResult raw) {
+    final profileAsync = _ref.read(userProfileProvider);
+    final profile = profileAsync.value;
+    
+    if (profile == null) return raw;
+
+    // Apply personalised flags to ingredients
+    final personalisedIngredients = SafetyScoreService.getPersonalisedIngredients(
+      ingredients: raw.ingredients,
+      profile: profile,
+    );
+
+    // Compute personalised safety score
+    final breakdown = SafetyScoreService.computePersonalisedScore(
+      ingredients: personalisedIngredients,
+      nova: raw.novaGroup,
+      profile: profile,
+      nutrients: raw.nutrients,
+    );
+
+    return raw.copyWith(
+      ingredients: personalisedIngredients,
+      healthScore: breakdown.finalScore,
+      breakdown: breakdown,
+    );
+  }
+
   /// Called by mobile_scanner when a barcode is detected.
   Future<void> onBarcodeDetected(String barcode) async {
-    // Debounce: skip if same barcode or already processing
     if (_processing || barcode == state.lastBarcode) return;
     _processing = true;
 
@@ -52,12 +86,30 @@ class ScanNotifier extends StateNotifier<ScanState> {
       lastBarcode: barcode,
     );
 
-    final result = await fetchProductByBarcode(barcode);
+    ScanResult? result;
+
+    // Check Cloud Analysis
+    if (AppConfig.enableCloudAnalysis) {
+      final connectivity = await Connectivity().checkConnectivity();
+      if (connectivity != ConnectivityResult.none) {
+        final api = _ref.read(apiServiceProvider);
+        result = await api.lookupBarcode(barcode, null); // Add real user_id if available
+        if (result != null) {
+          result = result.copyWith(source: AnalysisSource.cloud);
+        }
+      }
+    }
+
+    // Fallback to Local
+    if (result == null) {
+      result = await fetchProductByBarcode(barcode);
+    }
 
     if (result != null) {
+      final personalised = _personalise(result);
       state = ScanState(
         status: ScanStatus.found,
-        result: result,
+        result: personalised,
         lastBarcode: barcode,
       );
     } else {
@@ -71,10 +123,32 @@ class ScanNotifier extends StateNotifier<ScanState> {
   }
 
   /// Called when OCR text has been extracted from the label image.
-  void onOcrResult(ScanResult result) {
+  Future<void> onOcrResult(ScanResult localResult) async {
+    ScanResult? finalResult;
+
+    // Check Cloud Analysis for ingredients
+    if (AppConfig.enableCloudAnalysis) {
+      final connectivity = await Connectivity().checkConnectivity();
+      if (connectivity != ConnectivityResult.none) {
+        final api = _ref.read(apiServiceProvider);
+        final ingredientNames = localResult.ingredients.map((i) => i.name).toList();
+        finalResult = await api.analyseIngredients(ingredientNames, null);
+        if (finalResult != null) {
+          finalResult = finalResult.copyWith(
+            productName: localResult.productName,
+            source: AnalysisSource.cloud,
+          );
+        }
+      }
+    }
+
+    // Fallback to local result
+    finalResult ??= localResult;
+
+    final personalised = _personalise(finalResult);
     state = ScanState(
       status: ScanStatus.found,
-      result: result,
+      result: personalised,
     );
   }
 
@@ -92,5 +166,5 @@ class ScanNotifier extends StateNotifier<ScanState> {
 
 final scanProvider =
     StateNotifierProvider.autoDispose<ScanNotifier, ScanState>((ref) {
-  return ScanNotifier();
+  return ScanNotifier(ref);
 });

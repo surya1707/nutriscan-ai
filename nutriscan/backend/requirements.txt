@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+sqlalchemy
+aiosqlite
+pydantic
+pydantic-settings
+rapidfuzz
+httpx
+redis
+python-dotenv
+python-multipart
+alembic
+bcrypt
+pyjwt

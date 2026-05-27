@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "826739627399",
+    "project_id": "nutriscan1707",
+    "storage_bucket": "nutriscan1707.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:826739627399:android:8f0b181d781a2dff492f22",
+        "android_client_info": {
+          "package_name": "com.example.nutriscan"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "826739627399-3kpukjiebrc5vu2m36cqvqovk3r2vksu.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.nutriscan",
+            "certificate_hash": "4edd9807293579841d6e15266571718b0606a40f"
+          }
+        },
+        {
+          "client_id": "826739627399-iqf1l0ia3l9bcqborplut4m4ilokappo.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB0-NYVf5ciNiiQt7qzpgjx9GoeL57GYkM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "826739627399-iqf1l0ia3l9bcqborplut4m4ilokappo.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

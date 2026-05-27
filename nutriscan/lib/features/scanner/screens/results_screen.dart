@@ -9,6 +9,7 @@ import '../widgets/nutrient_insight_grid.dart';
 import '../widgets/ingredient_analysis_card.dart';
 import '../widgets/healthier_alternatives_list.dart';
 import '../widgets/action_buttons_footer.dart';
+import '../widgets/safety_score_breakdown_card.dart';
 
 class ResultsScreen extends StatefulWidget {
   final ScanResult? result;
@@ -99,6 +100,8 @@ class _ResultsScreenState extends State<ResultsScreen> {
                 score: _result.healthScore,
                 productName: _result.productName,
                 brand: _result.brand,
+                isPersonalised: _result.isPersonalised,
+                source: _result.source,
               ),
             ),
 
@@ -108,9 +111,19 @@ class _ResultsScreenState extends State<ResultsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const SizedBox(height: 20),
+                  
+                  // Breakdown card if personalised
+                  if (_result.breakdown != null) ...[
+                    SafetyScoreBreakdownCard(breakdown: _result.breakdown!),
+                    const SizedBox(height: 20),
+                  ],
+
                   NovaClassificationBadge(group: _result.novaGroup),
                   const SizedBox(height: 24),
-                  NutrientInsightGrid(nutrients: _result.nutrients),
+                  NutrientInsightGrid(
+                    nutrients: _result.nutrients,
+                    hasFullData: _result.hasFullNutritionData,
+                  ),
                   const SizedBox(height: 24),
                   IngredientAnalysisCard(ingredients: _result.ingredients),
                   const SizedBox(height: 28),
@@ -121,7 +134,6 @@ class _ResultsScreenState extends State<ResultsScreen> {
                     child: Divider(color: AppColors.divider, height: 1),
                   ),
                   const SizedBox(height: 12),
-                  // Pass result so Save button can persist it
                   ActionButtonsFooter(result: _result),
                 ],
               ),

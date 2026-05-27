@@ -20,11 +20,11 @@ Future<ScanResult?> extractFromLabelImage(File imageFile) async {
 
 /// Builds a [ScanResult] directly from raw OCR text.
 ScanResult _buildResultFromOcrText(String text) {
-  // Find the ingredient section (look for keyword)
   final lower = text.toLowerCase();
   String ingredientText = text;
 
-  final markers = ['ingredients:', 'ingredients :', 'contains:'];
+  // Improved marker detection
+  final markers = ['ingredients:', 'ingredients :', 'contains:', 'composition:', 'ingrediënten:'];
   for (final marker in markers) {
     final idx = lower.indexOf(marker);
     if (idx != -1) {
@@ -34,7 +34,7 @@ ScanResult _buildResultFromOcrText(String text) {
   }
 
   // Trim at known section endings
-  final endings = ['nutrition facts', 'serving size', 'allergen', 'best before', 'manufactured'];
+  final endings = ['nutrition facts', 'serving size', 'allergen', 'best before', 'manufactured', 'distrib'];
   for (final ending in endings) {
     final idx = ingredientText.toLowerCase().indexOf(ending);
     if (idx != -1) {
@@ -43,14 +43,8 @@ ScanResult _buildResultFromOcrText(String text) {
   }
 
   ingredientText = ingredientText.trim();
-
-  // Parse using the same shared parser from OFF service
   final ingredients = _parseIngredients(ingredientText);
-
-  // Estimate NOVA group from ingredient list heuristics
   final nova = _estimateNova(ingredients);
-
-  // Build score with empty nutriments (OCR can't get exact numbers)
   final score = _estimateScoreFromIngredients(ingredients, nova);
 
   return ScanResult(
@@ -59,10 +53,10 @@ ScanResult _buildResultFromOcrText(String text) {
     healthScore: score,
     novaGroup: nova,
     nutrients: const [
-      NutrientInfo(name: 'Calories', value: '—', unit: 'kcal', level: NutritionLevel.moderate),
-      NutrientInfo(name: 'Sugar', value: '—', unit: 'g', level: NutritionLevel.moderate),
-      NutrientInfo(name: 'Fat', value: '—', unit: 'g', level: NutritionLevel.moderate),
-      NutrientInfo(name: 'Sodium', value: '—', unit: 'mg', level: NutritionLevel.moderate),
+      NutrientInfo(name: 'Calories', value: '—', unit: 'kcal', level: NutritionLevel.unknown),
+      NutrientInfo(name: 'Sugar', value: '—', unit: 'g', level: NutritionLevel.unknown),
+      NutrientInfo(name: 'Fat', value: '—', unit: 'g', level: NutritionLevel.unknown),
+      NutrientInfo(name: 'Sodium', value: '—', unit: 'mg', level: NutritionLevel.unknown),
     ],
     ingredients: ingredients,
     alternatives: const [],
@@ -70,11 +64,11 @@ ScanResult _buildResultFromOcrText(String text) {
 }
 
 String _extractProductName(String text) {
-  // The product name is usually the first non-empty line in large text
   final lines = text.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
   if (lines.isEmpty) return 'Scanned Product';
-  // Prefer lines that look like a name (not all-caps ingredient lists)
   for (final line in lines.take(5)) {
+    // If it's the ingredient line, skip it
+    if (line.toLowerCase().contains('ingredients')) continue;
     if (line.length > 3 && line.length < 60 && !line.contains(',')) {
       return line;
     }
@@ -83,7 +77,6 @@ String _extractProductName(String text) {
 }
 
 String _extractBrand(String text) {
-  // Look for common brand indicators
   final brandRegex = RegExp(r'(?:brand|by|made by|manufactured by)[:\s]+([A-Za-z\s]+)', caseSensitive: false);
   final match = brandRegex.firstMatch(text);
   return match?.group(1)?.trim() ?? 'Scanned Label';
@@ -104,12 +97,10 @@ List<IngredientItem> _parseIngredients(String raw) {
       .where((s) => s.isNotEmpty && s.length > 1)
       .toList();
 
-  const flaggedAdditives = _flaggedAdditives;
-
   return parts.map((ingredient) {
     final lower = ingredient.toLowerCase();
     String? flagReason;
-    for (final entry in flaggedAdditives.entries) {
+    for (final entry in _flaggedAdditives.entries) {
       if (lower.contains(entry.key)) {
         flagReason = entry.value;
         break;
@@ -129,7 +120,8 @@ NovaGroup _estimateNova(List<IngredientItem> ingredients) {
 
   const ultraProcessedMarkers = [
     'syrup', 'artificial flavor', 'colour', 'color', 'modified starch',
-    'emulsifier', 'preservative', 'sweetener', 'hydrolysed', 'interesterified'
+    'emulsifier', 'preservative', 'sweetener', 'hydrolysed', 'interesterified',
+    'hydrogenated', 'maltodextrin', 'dextrose', 'inverted sugar'
   ];
 
   int markerCount = 0;
@@ -137,28 +129,43 @@ NovaGroup _estimateNova(List<IngredientItem> ingredients) {
     if (allNames.contains(m)) markerCount++;
   }
 
+  // If sugar is present, it's likely at least NOVA 3
+  final hasSugar = allNames.contains('sugar') || allNames.contains('syrup');
+  final hasOil = allNames.contains('oil') || allNames.contains('fat') && !allNames.contains('roasted peanuts');
+
   if (markerCount >= 3 || ingredients.where((i) => i.isFlagged).length >= 2) {
     return NovaGroup.group4;
   }
-  if (markerCount >= 1) return NovaGroup.group3;
-  if (ingredients.length > 5) return NovaGroup.group2;
+  if (markerCount >= 1 || (hasSugar && hasOil)) return NovaGroup.group3;
+  if (ingredients.length > 5 || hasSugar || hasOil) return NovaGroup.group2;
   return NovaGroup.group1;
 }
 
 int _estimateScoreFromIngredients(List<IngredientItem> ingredients, NovaGroup nova) {
-  double score = 85;
+  double score = 85; // Base score for unprocessed
+
+  // More aggressive deductions for OCR estimations
   switch (nova) {
     case NovaGroup.group1: break;
-    case NovaGroup.group2: score -= 5; break;
-    case NovaGroup.group3: score -= 15; break;
-    case NovaGroup.group4: score -= 30; break;
+    case NovaGroup.group2: score -= 10; break;
+    case NovaGroup.group3: score -= 25; break;
+    case NovaGroup.group4: score -= 45; break;
   }
+
   final flagged = ingredients.where((i) => i.isFlagged).length;
-  score -= (flagged * 8).clamp(0, 25).toDouble();
+  score -= (flagged * 10).clamp(0, 30).toDouble();
+
+  // Check if "Sugar" is a top ingredient
+  if (ingredients.isNotEmpty) {
+    final firstThree = ingredients.take(3).map((i) => i.name.toLowerCase()).join(' ');
+    if (firstThree.contains('sugar') || firstThree.contains('syrup')) {
+      score -= 15;
+    }
+  }
+
   return score.round().clamp(0, 100);
 }
 
-/// Re-export the flagged additives map for the OCR parser.
 const Map<String, String> _flaggedAdditives = {
   'high-fructose corn syrup': 'Linked to metabolic disorders',
   'hfcs': 'High-fructose corn syrup — metabolic risk',

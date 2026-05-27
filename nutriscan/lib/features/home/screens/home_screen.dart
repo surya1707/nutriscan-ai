@@ -1,16 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../auth/providers/auth_provider.dart';
 import '../widgets/hero_scan_card.dart';
 import '../widgets/stats_row.dart';
 import '../widgets/personalize_banner.dart';
 import '../widgets/recent_scans_section.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final authState = ref.watch(authProvider);
+    final user = authState.value?.user;
+
     return Scaffold(
       backgroundColor: AppColors.cream,
       body: SafeArea(
@@ -42,14 +47,33 @@ class HomeScreen extends StatelessWidget {
                       ),
                     ],
                   ),
-                  Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: AppColors.lightGreen,
-                      borderRadius: BorderRadius.circular(22),
-                    ),
-                    child: const Icon(Icons.person_outline, color: AppColors.mediumGreen, size: 22),
+                  Column(
+                    children: [
+                      if (user?.photoURL != null)
+                        CircleAvatar(
+                          radius: 22,
+                          backgroundImage: NetworkImage(user!.photoURL!),
+                        )
+                      else
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: AppColors.lightGreen,
+                            borderRadius: BorderRadius.circular(22),
+                          ),
+                          child: const Icon(Icons.person_outline, color: AppColors.mediumGreen, size: 22),
+                        ),
+                      const SizedBox(height: 4),
+                      Text(
+                        user?.displayName?.split(' ').first ?? 'Guest',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.mediumGreen,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),

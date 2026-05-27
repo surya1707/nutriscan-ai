@@ -8,11 +8,16 @@ class HeroScoreHeader extends StatefulWidget {
   final String productName;
   final String brand;
 
+  final bool isPersonalised;
+  final AnalysisSource source;
+
   const HeroScoreHeader({
     super.key,
     required this.score,
     required this.productName,
     required this.brand,
+    this.isPersonalised = false,
+    this.source = AnalysisSource.local,
   });
 
   @override
@@ -102,6 +107,68 @@ class _HeroScoreHeaderState extends State<HeroScoreHeader>
                   height: 1.2,
                 ),
               ),
+              if (widget.isPersonalised || widget.source == AnalysisSource.cloud) ...[
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.center,
+                  children: [
+                    if (widget.isPersonalised)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: Colors.white24, width: 0.5),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.person_pin_rounded,
+                                color: Colors.white, size: 12),
+                            SizedBox(width: 4),
+                            Text(
+                              'Personalised for you',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: 0.2,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    if (widget.source == AnalysisSource.cloud)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: AppColors.safeGreen.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: AppColors.safeGreen.withOpacity(0.5), width: 0.5),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.auto_awesome_rounded,
+                                color: AppColors.safeGreen, size: 12),
+                            SizedBox(width: 4),
+                            Text(
+                              'Analysed by AI',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: 0.2,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ],
               const SizedBox(height: 28),
 
               // Circular gauge

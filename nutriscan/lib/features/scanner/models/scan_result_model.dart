@@ -1,7 +1,9 @@
 import 'package:uuid/uuid.dart';
+import '../../../core/services/safety_score_service.dart';
 
 /// NutritionLevel indicates whether a nutrient's value is healthy.
-enum NutritionLevel { good, moderate, poor }
+/// [unknown] is used when no data was obtained (OCR / manual entry path).
+enum NutritionLevel { good, moderate, poor, unknown }
 
 /// NOVA group classification (1–4) for food processing level.
 enum NovaGroup { group1, group2, group3, group4 }
@@ -49,9 +51,11 @@ class AlternativeProduct {
   });
 }
 
+enum AnalysisSource { local, cloud }
+
 /// The complete result of scanning a food product.
 class ScanResult {
-  final String id; // UUID primary key
+  final String id;
   final String productName;
   final String brand;
   final int healthScore; // 0–100
@@ -59,6 +63,8 @@ class ScanResult {
   final List<NutrientInfo> nutrients;
   final List<IngredientItem> ingredients;
   final List<AlternativeProduct> alternatives;
+  final SafetyScoreBreakdown? breakdown;
+  final AnalysisSource source;
 
   ScanResult({
     String? id,
@@ -69,7 +75,45 @@ class ScanResult {
     required this.nutrients,
     required this.ingredients,
     required this.alternatives,
+    this.breakdown,
+    this.source = AnalysisSource.local,
   }) : id = id ?? const Uuid().v4();
+
+  /// True when real nutrient numbers were retrieved (barcode → API path).
+  bool get hasFullNutritionData =>
+      nutrients.isNotEmpty && nutrients.any((n) => n.value != '—');
+
+  /// True when the score was personalised for a user profile (actual deductions made).
+  bool get isPersonalised {
+    if (breakdown == null) return false;
+    return breakdown!.allergenDeduction > 0 || breakdown!.conditionDeduction > 0;
+  }
+
+  ScanResult copyWith({
+    String? id,
+    String? productName,
+    String? brand,
+    int? healthScore,
+    NovaGroup? novaGroup,
+    List<NutrientInfo>? nutrients,
+    List<IngredientItem>? ingredients,
+    List<AlternativeProduct>? alternatives,
+    SafetyScoreBreakdown? breakdown,
+    AnalysisSource? source,
+  }) {
+    return ScanResult(
+      id: id ?? this.id,
+      productName: productName ?? this.productName,
+      brand: brand ?? this.brand,
+      healthScore: healthScore ?? this.healthScore,
+      novaGroup: novaGroup ?? this.novaGroup,
+      nutrients: nutrients ?? this.nutrients,
+      ingredients: ingredients ?? this.ingredients,
+      alternatives: alternatives ?? this.alternatives,
+      breakdown: breakdown ?? this.breakdown,
+      source: source ?? this.source,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
