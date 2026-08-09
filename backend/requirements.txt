@@ -12,3 +12,4 @@ python-multipart
 alembic
 bcrypt
 pyjwt
+firebase-admin

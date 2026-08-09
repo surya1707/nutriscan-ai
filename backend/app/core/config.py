@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     ENVIRONMENT: str = "development"
+    FIREBASE_PROJECT_ID: str | None = None
+    FIREBASE_CREDENTIALS_PATH: str | None = None
 
     class Config:
         env_file = ".env"
