@@ -13,3 +13,4 @@ alembic
 bcrypt
 pyjwt
 firebase-admin
+slowapi

@@ -48,3 +48,5 @@ app.*.map.json
 backend/.env
 backend/*.db
 android/app/google-services.json
+
+*venv

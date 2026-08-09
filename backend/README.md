@@ -20,6 +20,16 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 Place the generated string in your `.env` file as the `SECRET_KEY` value.
 
+### Database Setup (SQLite vs Postgres)
+For local development, the app defaults to an SQLite database (`nutriscan.db`). This provides a zero-setup quickstart. 
+
+To apply the latest database migrations locally, run:
+```bash
+alembic upgrade head
+```
+
+Note: SQLite contains dev/test data. If you switch to PostgreSQL via Docker Compose, you will start with an empty database. No data migration script exists to transfer data from SQLite to Postgres.
+
 ## Environment Variables Reference
 
 | Variable | Description |
@@ -49,5 +59,21 @@ To start the backend and its dependencies (like PostgreSQL and Redis) using Dock
 ```bash
 docker-compose up --build
 ```
-
 This will spin up the database, Redis, and the FastAPI application.
+
+By default, Docker Compose is configured to use the PostgreSQL database. The backend container will automatically run `alembic upgrade head` before starting the application, ensuring the schema is always up to date.
+
+To use Postgres in Docker Compose, ensure your `.env` file has the Postgres `DATABASE_URL` uncommented and the SQLite one commented out.
+
+## Performance & Rate Limiting
+
+- **Caching**: The Open Food Facts API client caches barcode lookup responses in Redis for 24 hours. This minimizes third-party API hits and avoids rate-limiting issues.
+- **Rate Limiting**: To prevent abuse, the `/scan/analyse` and `/scan/barcode` endpoints are rate limited (30 requests/minute per IP) using `slowapi`.
+
+## Testing
+
+To run the backend test suite, install the dev requirements and run `pytest`:
+```bash
+pip install -r requirements-dev.txt
+pytest
+```

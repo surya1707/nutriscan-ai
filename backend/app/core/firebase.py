@@ -5,6 +5,10 @@ from firebase_admin import credentials
 from .config import settings
 
 def init_firebase():
+    if "pytest" in sys.modules:
+        return
+        
+        
     if not settings.FIREBASE_CREDENTIALS_PATH or not os.path.exists(settings.FIREBASE_CREDENTIALS_PATH):
         print(
             "ERROR: Firebase credentials file not found at "
