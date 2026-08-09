@@ -5,12 +5,9 @@
 *.swp
 .DS_Store
 .atom/
-.build/
 .buildlog/
 .history
 .svn/
-.swiftpm/
-migrate_working_dir/
 
 # IntelliJ related
 *.iml
@@ -27,11 +24,14 @@ migrate_working_dir/
 **/doc/api/
 **/ios/Flutter/.last_build_id
 .dart_tool/
+.flutter-plugins
 .flutter-plugins-dependencies
 .pub-cache/
 .pub/
 /build/
-/coverage/
+
+# Web related
+lib/generated_plugin_registrant.dart
 
 # Symbolication related
 app.*.symbols
@@ -39,36 +39,19 @@ app.*.symbols
 # Obfuscation related
 app.*.map.json
 
+# Exceptions to above rules.
+!/packages/flutter_tools/test/data/dart_dependencies_test/**/.packages
+
 # Android Studio will place build artifacts here
 /android/app/debug
 /android/app/profile
 /android/app/release
 
-# Backend secrets and DBs
-backend/.env
-backend/*.db
-mobile/android/app/google-services.json
-mobile/lib/firebase_options.dart
+# Keystore files
+*.jks
+*.keystore
 
-# Python / Backend
-__pycache__/
-*.py[cod]
-*$py.class
-venv/
-.venv/
-env/
-.env
-backend/venv/
-
-# Node / JS
-node_modules/
-npm-debug.log
-yarn-error.log
-yarn.lock
-package-lock.json
-
-# OS files
-Thumbs.db
-
-# Other
-nutriscan.db
+# Google Services
+android/app/google-services.json
+ios/Runner/GoogleService-Info.plist
+lib/firebase_options.dart
