@@ -11,6 +11,7 @@ class ScanHistoryTable extends Table {
   TextColumn get ingredientsJson => text()(); // JSON encoded
   TextColumn get alternativesJson => text()(); // JSON encoded
   DateTimeColumn get scannedAt => dateTime()();
+  BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -24,6 +25,7 @@ class UserProfileTable extends Table {
   TextColumn get allergiesJson => text().withDefault(const Constant('[]'))();
   TextColumn get conditionsJson => text().withDefault(const Constant('[]'))();
   TextColumn get goalsJson => text().withDefault(const Constant('[]'))();
+  BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
 
   @override
   Set<Column> get primaryKey => {id};

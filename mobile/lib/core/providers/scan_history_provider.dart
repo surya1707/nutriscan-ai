@@ -1,7 +1,8 @@
 import 'dart:convert';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:drift/drift.dart' show Value;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../data/services/api_service.dart';
 import '../database/app_database.dart';
 import '../database/tables.dart';
 import '../database/scan_history_dao.dart';
@@ -77,6 +78,7 @@ Future<void> saveScanResult(WidgetRef ref, ScanResult result) async {
       }).toList(),
     ),
     scannedAt: DateTime.now(),
+    isSynced: const Value(false),
   );
   
   await dao.upsertScan(companion);
@@ -84,24 +86,21 @@ Future<void> saveScanResult(WidgetRef ref, ScanResult result) async {
   // Sync to cloud
   final user = FirebaseAuth.instance.currentUser;
   if (user != null) {
-    try {
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .collection('scans')
-          .doc(result.id)
-          .set({
-        'productName': result.productName,
-        'brand': result.brand,
-        'healthScore': result.healthScore,
-        'novaGroup': _novaGroupToInt(result.novaGroup),
-        'nutrientsJson': companion.nutrientsJson.value,
-        'ingredientsJson': companion.ingredientsJson.value,
-        'alternativesJson': companion.alternativesJson.value,
-        'scannedAt': companion.scannedAt.value.toIso8601String(),
-      }, SetOptions(merge: true)).timeout(const Duration(seconds: 5));
-    } catch (e) {
-      print('Warning: Failed to sync scan result to cloud: $e');
+    final apiService = ApiService();
+    final success = await apiService.postScanHistory({
+      'id': result.id,
+      'product_name': result.productName,
+      'brand': result.brand,
+      'health_score': result.healthScore,
+      'nova_group': _novaGroupToInt(result.novaGroup),
+      'nutrients': jsonDecode(companion.nutrientsJson.value),
+      'ingredients': jsonDecode(companion.ingredientsJson.value),
+      'alternatives': jsonDecode(companion.alternativesJson.value),
+      'scanned_at': companion.scannedAt.value.toIso8601String(),
+    });
+    
+    if (success) {
+      await dao.upsertScan(companion.copyWith(isSynced: const Value(true)));
     }
   }
 }
@@ -111,17 +110,8 @@ Future<void> deleteScanById(WidgetRef ref, String id) async {
   
   final user = FirebaseAuth.instance.currentUser;
   if (user != null) {
-    try {
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .collection('scans')
-          .doc(id)
-          .delete()
-          .timeout(const Duration(seconds: 5));
-    } catch (e) {
-      print('Warning: Failed to delete scan from cloud: $e');
-    }
+    final apiService = ApiService();
+    await apiService.deleteScanHistoryItem(id);
   }
 }
 
@@ -132,47 +122,56 @@ Future<void> syncScansWithCloud(Ref ref) async {
 
   final dao = ref.read(scanHistoryDaoProvider);
   final localScans = await dao.getAll();
-  final scansRef = FirebaseFirestore.instance
-      .collection('users')
-      .doc(user.uid)
-      .collection('scans');
+  final apiService = ApiService();
 
-  // Push local to cloud
-  try {
-    final batch = FirebaseFirestore.instance.batch();
-    for (final scan in localScans) {
-      final docRef = scansRef.doc(scan.id);
-      batch.set(docRef, {
-        'productName': scan.productName,
+  // Push unsynced local to cloud
+  for (final scan in localScans) {
+    if (!scan.isSynced) {
+      final success = await apiService.postScanHistory({
+        'id': scan.id,
+        'product_name': scan.productName,
         'brand': scan.brand,
-        'healthScore': scan.healthScore,
-        'novaGroup': scan.novaGroup,
-        'nutrientsJson': scan.nutrientsJson,
-        'ingredientsJson': scan.ingredientsJson,
-        'alternativesJson': scan.alternativesJson,
-        'scannedAt': scan.scannedAt.toIso8601String(),
-      }, SetOptions(merge: true));
+        'health_score': scan.healthScore,
+        'nova_group': scan.novaGroup,
+        'nutrients': jsonDecode(scan.nutrientsJson),
+        'ingredients': jsonDecode(scan.ingredientsJson),
+        'alternatives': jsonDecode(scan.alternativesJson),
+        'scanned_at': scan.scannedAt.toIso8601String(),
+      });
+      if (success) {
+        await dao.upsertScan(ScanHistoryTableCompanion.insert(
+          id: scan.id,
+          productName: scan.productName,
+          brand: scan.brand,
+          healthScore: scan.healthScore,
+          novaGroup: scan.novaGroup,
+          nutrientsJson: scan.nutrientsJson,
+          ingredientsJson: scan.ingredientsJson,
+          alternativesJson: scan.alternativesJson,
+          scannedAt: scan.scannedAt,
+          isSynced: const Value(true),
+        ));
+      }
     }
-    await batch.commit().timeout(const Duration(seconds: 5));
+  }
 
-    // Pull cloud to local
-    final cloudSnap = await scansRef.get(const GetOptions(source: Source.serverAndCache)).timeout(const Duration(seconds: 5));
-    for (final doc in cloudSnap.docs) {
-      final data = doc.data();
+  // Pull cloud to local
+  final cloudScans = await apiService.getScanHistory(limit: 100);
+  if (cloudScans != null) {
+    for (final data in cloudScans) {
       await dao.upsertScan(ScanHistoryTableCompanion.insert(
-        id: doc.id,
-        productName: data['productName'] ?? 'Unknown',
+        id: data['id']?.toString() ?? DateTime.now().millisecondsSinceEpoch.toString(),
+        productName: data['product_name'] ?? 'Unknown',
         brand: data['brand'] ?? '',
-        healthScore: data['healthScore'] ?? 0,
-        novaGroup: data['novaGroup'] ?? 4,
-        nutrientsJson: data['nutrientsJson'] ?? '[]',
-        ingredientsJson: data['ingredientsJson'] ?? '[]',
-        alternativesJson: data['alternativesJson'] ?? '[]',
-        scannedAt: DateTime.parse(data['scannedAt']),
+        healthScore: data['health_score'] ?? data['safety_score'] ?? 0,
+        novaGroup: data['nova_group'] ?? data['nova_class'] ?? 4,
+        nutrientsJson: jsonEncode(data['nutrients'] ?? []),
+        ingredientsJson: jsonEncode(data['ingredients'] ?? []),
+        alternativesJson: jsonEncode(data['alternatives'] ?? []),
+        scannedAt: data['scanned_at'] != null ? DateTime.parse(data['scanned_at']) : DateTime.now(),
+        isSynced: const Value(true),
       ));
     }
-  } catch (e) {
-    print('Warning: Failed to sync scan history with cloud: $e');
   }
 }
 

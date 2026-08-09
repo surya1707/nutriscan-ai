@@ -1,8 +1,8 @@
 import 'dart:convert';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:drift/drift.dart' show Value;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../data/services/api_service.dart';
 import '../database/app_database.dart';
 import '../database/tables.dart';
 import '../database/user_profile_dao.dart';
@@ -76,9 +76,9 @@ class UserProfileNotifier extends StateNotifier<AsyncValue<UserProfile>> {
       // If auth, sync from cloud
       if (user != null) {
         try {
-          final doc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get(const GetOptions(source: Source.serverAndCache)).timeout(const Duration(seconds: 5));
-          if (doc.exists) {
-            final data = doc.data()!;
+          final apiService = ApiService();
+          final data = await apiService.getUserProfile();
+          if (data != null) {
             profile = UserProfile(
               displayName: data['displayName'] ?? profile.displayName,
               allergies: Set<String>.from((data['allergies'] as List?) ?? []),
@@ -91,7 +91,24 @@ class UserProfileNotifier extends StateNotifier<AsyncValue<UserProfile>> {
               allergiesJson: Value(jsonEncode(profile.allergies.toList())),
               conditionsJson: Value(jsonEncode(profile.conditions.toList())),
               goalsJson: Value(jsonEncode(profile.goals.toList())),
+              isSynced: const Value(true),
             ));
+          } else if (row != null && !row.isSynced) {
+            // Push local to cloud
+            final success = await apiService.patchUserProfile({
+              'allergies': profile.allergies.toList(),
+              'conditions': profile.conditions.toList(),
+              'goals': profile.goals.toList(),
+            });
+            if (success) {
+               await _dao.saveProfile(UserProfileTableCompanion.insert(
+                 displayName: Value(profile.displayName),
+                 allergiesJson: Value(jsonEncode(profile.allergies.toList())),
+                 conditionsJson: Value(jsonEncode(profile.conditions.toList())),
+                 goalsJson: Value(jsonEncode(profile.goals.toList())),
+                 isSynced: const Value(true),
+               ));
+            }
           }
         } catch (e) {
           print('Cloud sync failed, falling back to local: $e');
@@ -113,20 +130,27 @@ class UserProfileNotifier extends StateNotifier<AsyncValue<UserProfile>> {
       allergiesJson: Value(jsonEncode(profile.allergies.toList())),
       conditionsJson: Value(jsonEncode(profile.conditions.toList())),
       goalsJson: Value(jsonEncode(profile.goals.toList())),
+      isSynced: const Value(false),
     ));
 
     // Sync to cloud if authenticated
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
-      try {
-        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-          'displayName': profile.displayName,
-          'allergies': profile.allergies.toList(),
-          'conditions': profile.conditions.toList(),
-          'goals': profile.goals.toList(),
-        }, SetOptions(merge: true)).timeout(const Duration(seconds: 5));
-      } catch (e) {
-        print('Warning: Failed to sync profile to cloud: $e');
+      final apiService = ApiService();
+      final success = await apiService.patchUserProfile({
+        'allergies': profile.allergies.toList(),
+        'conditions': profile.conditions.toList(),
+        'goals': profile.goals.toList(),
+      });
+      
+      if (success) {
+        await _dao.saveProfile(UserProfileTableCompanion.insert(
+          displayName: Value(profile.displayName),
+          allergiesJson: Value(jsonEncode(profile.allergies.toList())),
+          conditionsJson: Value(jsonEncode(profile.conditions.toList())),
+          goalsJson: Value(jsonEncode(profile.goals.toList())),
+          isSynced: const Value(true),
+        ));
       }
     }
 

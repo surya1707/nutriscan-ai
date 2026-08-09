@@ -19,7 +19,7 @@ class AuthState {
 
 class AuthNotifier extends AsyncNotifier<AuthState> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final GoogleSignIn _googleSignIn = GoogleSignIn();
+  final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
 
   @override
   Future<AuthState> build() async {
@@ -49,7 +49,7 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
   Future<void> signInWithGoogle() async {
     state = const AsyncValue.loading();
     try {
-      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
+      final GoogleSignInAccount? googleUser = await _googleSignIn.authenticate();
       if (googleUser == null) {
         state = await AsyncValue.guard(() => build());
         return; // User canceled
@@ -57,7 +57,6 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
 
       final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
       final AuthCredential credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,
       );
 

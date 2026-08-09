@@ -61,6 +61,16 @@ class $ScanHistoryTableTable extends ScanHistoryTable
   late final GeneratedColumn<DateTime> scannedAt = GeneratedColumn<DateTime>(
       'scanned_at', aliasedName, false,
       type: DriftSqlType.dateTime, requiredDuringInsert: true);
+  static const VerificationMeta _isSyncedMeta =
+      const VerificationMeta('isSynced');
+  @override
+  late final GeneratedColumn<bool> isSynced = GeneratedColumn<bool>(
+      'is_synced', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("is_synced" IN (0, 1))'),
+      defaultValue: const Constant(false));
   @override
   List<GeneratedColumn> get $columns => [
         id,
@@ -71,7 +81,8 @@ class $ScanHistoryTableTable extends ScanHistoryTable
         nutrientsJson,
         ingredientsJson,
         alternativesJson,
-        scannedAt
+        scannedAt,
+        isSynced
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -147,6 +158,10 @@ class $ScanHistoryTableTable extends ScanHistoryTable
     } else if (isInserting) {
       context.missing(_scannedAtMeta);
     }
+    if (data.containsKey('is_synced')) {
+      context.handle(_isSyncedMeta,
+          isSynced.isAcceptableOrUnknown(data['is_synced']!, _isSyncedMeta));
+    }
     return context;
   }
 
@@ -174,6 +189,8 @@ class $ScanHistoryTableTable extends ScanHistoryTable
           DriftSqlType.string, data['${effectivePrefix}alternatives_json'])!,
       scannedAt: attachedDatabase.typeMapping
           .read(DriftSqlType.dateTime, data['${effectivePrefix}scanned_at'])!,
+      isSynced: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}is_synced'])!,
     );
   }
 
@@ -194,6 +211,7 @@ class ScanHistoryTableData extends DataClass
   final String ingredientsJson;
   final String alternativesJson;
   final DateTime scannedAt;
+  final bool isSynced;
   const ScanHistoryTableData(
       {required this.id,
       required this.productName,
@@ -203,7 +221,8 @@ class ScanHistoryTableData extends DataClass
       required this.nutrientsJson,
       required this.ingredientsJson,
       required this.alternativesJson,
-      required this.scannedAt});
+      required this.scannedAt,
+      required this.isSynced});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -216,6 +235,7 @@ class ScanHistoryTableData extends DataClass
     map['ingredients_json'] = Variable<String>(ingredientsJson);
     map['alternatives_json'] = Variable<String>(alternativesJson);
     map['scanned_at'] = Variable<DateTime>(scannedAt);
+    map['is_synced'] = Variable<bool>(isSynced);
     return map;
   }
 
@@ -230,6 +250,7 @@ class ScanHistoryTableData extends DataClass
       ingredientsJson: Value(ingredientsJson),
       alternativesJson: Value(alternativesJson),
       scannedAt: Value(scannedAt),
+      isSynced: Value(isSynced),
     );
   }
 
@@ -246,6 +267,7 @@ class ScanHistoryTableData extends DataClass
       ingredientsJson: serializer.fromJson<String>(json['ingredientsJson']),
       alternativesJson: serializer.fromJson<String>(json['alternativesJson']),
       scannedAt: serializer.fromJson<DateTime>(json['scannedAt']),
+      isSynced: serializer.fromJson<bool>(json['isSynced']),
     );
   }
   @override
@@ -261,6 +283,7 @@ class ScanHistoryTableData extends DataClass
       'ingredientsJson': serializer.toJson<String>(ingredientsJson),
       'alternativesJson': serializer.toJson<String>(alternativesJson),
       'scannedAt': serializer.toJson<DateTime>(scannedAt),
+      'isSynced': serializer.toJson<bool>(isSynced),
     };
   }
 
@@ -273,7 +296,8 @@ class ScanHistoryTableData extends DataClass
           String? nutrientsJson,
           String? ingredientsJson,
           String? alternativesJson,
-          DateTime? scannedAt}) =>
+          DateTime? scannedAt,
+          bool? isSynced}) =>
       ScanHistoryTableData(
         id: id ?? this.id,
         productName: productName ?? this.productName,
@@ -284,6 +308,7 @@ class ScanHistoryTableData extends DataClass
         ingredientsJson: ingredientsJson ?? this.ingredientsJson,
         alternativesJson: alternativesJson ?? this.alternativesJson,
         scannedAt: scannedAt ?? this.scannedAt,
+        isSynced: isSynced ?? this.isSynced,
       );
   ScanHistoryTableData copyWithCompanion(ScanHistoryTableCompanion data) {
     return ScanHistoryTableData(
@@ -304,6 +329,7 @@ class ScanHistoryTableData extends DataClass
           ? data.alternativesJson.value
           : this.alternativesJson,
       scannedAt: data.scannedAt.present ? data.scannedAt.value : this.scannedAt,
+      isSynced: data.isSynced.present ? data.isSynced.value : this.isSynced,
     );
   }
 
@@ -318,14 +344,24 @@ class ScanHistoryTableData extends DataClass
           ..write('nutrientsJson: $nutrientsJson, ')
           ..write('ingredientsJson: $ingredientsJson, ')
           ..write('alternativesJson: $alternativesJson, ')
-          ..write('scannedAt: $scannedAt')
+          ..write('scannedAt: $scannedAt, ')
+          ..write('isSynced: $isSynced')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(id, productName, brand, healthScore,
-      novaGroup, nutrientsJson, ingredientsJson, alternativesJson, scannedAt);
+  int get hashCode => Object.hash(
+      id,
+      productName,
+      brand,
+      healthScore,
+      novaGroup,
+      nutrientsJson,
+      ingredientsJson,
+      alternativesJson,
+      scannedAt,
+      isSynced);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -338,7 +374,8 @@ class ScanHistoryTableData extends DataClass
           other.nutrientsJson == this.nutrientsJson &&
           other.ingredientsJson == this.ingredientsJson &&
           other.alternativesJson == this.alternativesJson &&
-          other.scannedAt == this.scannedAt);
+          other.scannedAt == this.scannedAt &&
+          other.isSynced == this.isSynced);
 }
 
 class ScanHistoryTableCompanion extends UpdateCompanion<ScanHistoryTableData> {
@@ -351,6 +388,7 @@ class ScanHistoryTableCompanion extends UpdateCompanion<ScanHistoryTableData> {
   final Value<String> ingredientsJson;
   final Value<String> alternativesJson;
   final Value<DateTime> scannedAt;
+  final Value<bool> isSynced;
   final Value<int> rowid;
   const ScanHistoryTableCompanion({
     this.id = const Value.absent(),
@@ -362,6 +400,7 @@ class ScanHistoryTableCompanion extends UpdateCompanion<ScanHistoryTableData> {
     this.ingredientsJson = const Value.absent(),
     this.alternativesJson = const Value.absent(),
     this.scannedAt = const Value.absent(),
+    this.isSynced = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   ScanHistoryTableCompanion.insert({
@@ -374,6 +413,7 @@ class ScanHistoryTableCompanion extends UpdateCompanion<ScanHistoryTableData> {
     required String ingredientsJson,
     required String alternativesJson,
     required DateTime scannedAt,
+    this.isSynced = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : id = Value(id),
         productName = Value(productName),
@@ -394,6 +434,7 @@ class ScanHistoryTableCompanion extends UpdateCompanion<ScanHistoryTableData> {
     Expression<String>? ingredientsJson,
     Expression<String>? alternativesJson,
     Expression<DateTime>? scannedAt,
+    Expression<bool>? isSynced,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -406,6 +447,7 @@ class ScanHistoryTableCompanion extends UpdateCompanion<ScanHistoryTableData> {
       if (ingredientsJson != null) 'ingredients_json': ingredientsJson,
       if (alternativesJson != null) 'alternatives_json': alternativesJson,
       if (scannedAt != null) 'scanned_at': scannedAt,
+      if (isSynced != null) 'is_synced': isSynced,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -420,6 +462,7 @@ class ScanHistoryTableCompanion extends UpdateCompanion<ScanHistoryTableData> {
       Value<String>? ingredientsJson,
       Value<String>? alternativesJson,
       Value<DateTime>? scannedAt,
+      Value<bool>? isSynced,
       Value<int>? rowid}) {
     return ScanHistoryTableCompanion(
       id: id ?? this.id,
@@ -431,6 +474,7 @@ class ScanHistoryTableCompanion extends UpdateCompanion<ScanHistoryTableData> {
       ingredientsJson: ingredientsJson ?? this.ingredientsJson,
       alternativesJson: alternativesJson ?? this.alternativesJson,
       scannedAt: scannedAt ?? this.scannedAt,
+      isSynced: isSynced ?? this.isSynced,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -465,6 +509,9 @@ class ScanHistoryTableCompanion extends UpdateCompanion<ScanHistoryTableData> {
     if (scannedAt.present) {
       map['scanned_at'] = Variable<DateTime>(scannedAt.value);
     }
+    if (isSynced.present) {
+      map['is_synced'] = Variable<bool>(isSynced.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -483,6 +530,7 @@ class ScanHistoryTableCompanion extends UpdateCompanion<ScanHistoryTableData> {
           ..write('ingredientsJson: $ingredientsJson, ')
           ..write('alternativesJson: $alternativesJson, ')
           ..write('scannedAt: $scannedAt, ')
+          ..write('isSynced: $isSynced, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -534,9 +582,19 @@ class $UserProfileTableTable extends UserProfileTable
       type: DriftSqlType.string,
       requiredDuringInsert: false,
       defaultValue: const Constant('[]'));
+  static const VerificationMeta _isSyncedMeta =
+      const VerificationMeta('isSynced');
+  @override
+  late final GeneratedColumn<bool> isSynced = GeneratedColumn<bool>(
+      'is_synced', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("is_synced" IN (0, 1))'),
+      defaultValue: const Constant(false));
   @override
   List<GeneratedColumn> get $columns =>
-      [id, displayName, allergiesJson, conditionsJson, goalsJson];
+      [id, displayName, allergiesJson, conditionsJson, goalsJson, isSynced];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -573,6 +631,10 @@ class $UserProfileTableTable extends UserProfileTable
       context.handle(_goalsJsonMeta,
           goalsJson.isAcceptableOrUnknown(data['goals_json']!, _goalsJsonMeta));
     }
+    if (data.containsKey('is_synced')) {
+      context.handle(_isSyncedMeta,
+          isSynced.isAcceptableOrUnknown(data['is_synced']!, _isSyncedMeta));
+    }
     return context;
   }
 
@@ -592,6 +654,8 @@ class $UserProfileTableTable extends UserProfileTable
           DriftSqlType.string, data['${effectivePrefix}conditions_json'])!,
       goalsJson: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}goals_json'])!,
+      isSynced: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}is_synced'])!,
     );
   }
 
@@ -608,12 +672,14 @@ class UserProfileTableData extends DataClass
   final String allergiesJson;
   final String conditionsJson;
   final String goalsJson;
+  final bool isSynced;
   const UserProfileTableData(
       {required this.id,
       required this.displayName,
       required this.allergiesJson,
       required this.conditionsJson,
-      required this.goalsJson});
+      required this.goalsJson,
+      required this.isSynced});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -622,6 +688,7 @@ class UserProfileTableData extends DataClass
     map['allergies_json'] = Variable<String>(allergiesJson);
     map['conditions_json'] = Variable<String>(conditionsJson);
     map['goals_json'] = Variable<String>(goalsJson);
+    map['is_synced'] = Variable<bool>(isSynced);
     return map;
   }
 
@@ -632,6 +699,7 @@ class UserProfileTableData extends DataClass
       allergiesJson: Value(allergiesJson),
       conditionsJson: Value(conditionsJson),
       goalsJson: Value(goalsJson),
+      isSynced: Value(isSynced),
     );
   }
 
@@ -644,6 +712,7 @@ class UserProfileTableData extends DataClass
       allergiesJson: serializer.fromJson<String>(json['allergiesJson']),
       conditionsJson: serializer.fromJson<String>(json['conditionsJson']),
       goalsJson: serializer.fromJson<String>(json['goalsJson']),
+      isSynced: serializer.fromJson<bool>(json['isSynced']),
     );
   }
   @override
@@ -655,6 +724,7 @@ class UserProfileTableData extends DataClass
       'allergiesJson': serializer.toJson<String>(allergiesJson),
       'conditionsJson': serializer.toJson<String>(conditionsJson),
       'goalsJson': serializer.toJson<String>(goalsJson),
+      'isSynced': serializer.toJson<bool>(isSynced),
     };
   }
 
@@ -663,13 +733,15 @@ class UserProfileTableData extends DataClass
           String? displayName,
           String? allergiesJson,
           String? conditionsJson,
-          String? goalsJson}) =>
+          String? goalsJson,
+          bool? isSynced}) =>
       UserProfileTableData(
         id: id ?? this.id,
         displayName: displayName ?? this.displayName,
         allergiesJson: allergiesJson ?? this.allergiesJson,
         conditionsJson: conditionsJson ?? this.conditionsJson,
         goalsJson: goalsJson ?? this.goalsJson,
+        isSynced: isSynced ?? this.isSynced,
       );
   UserProfileTableData copyWithCompanion(UserProfileTableCompanion data) {
     return UserProfileTableData(
@@ -683,6 +755,7 @@ class UserProfileTableData extends DataClass
           ? data.conditionsJson.value
           : this.conditionsJson,
       goalsJson: data.goalsJson.present ? data.goalsJson.value : this.goalsJson,
+      isSynced: data.isSynced.present ? data.isSynced.value : this.isSynced,
     );
   }
 
@@ -693,14 +766,15 @@ class UserProfileTableData extends DataClass
           ..write('displayName: $displayName, ')
           ..write('allergiesJson: $allergiesJson, ')
           ..write('conditionsJson: $conditionsJson, ')
-          ..write('goalsJson: $goalsJson')
+          ..write('goalsJson: $goalsJson, ')
+          ..write('isSynced: $isSynced')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode =>
-      Object.hash(id, displayName, allergiesJson, conditionsJson, goalsJson);
+  int get hashCode => Object.hash(
+      id, displayName, allergiesJson, conditionsJson, goalsJson, isSynced);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -709,7 +783,8 @@ class UserProfileTableData extends DataClass
           other.displayName == this.displayName &&
           other.allergiesJson == this.allergiesJson &&
           other.conditionsJson == this.conditionsJson &&
-          other.goalsJson == this.goalsJson);
+          other.goalsJson == this.goalsJson &&
+          other.isSynced == this.isSynced);
 }
 
 class UserProfileTableCompanion extends UpdateCompanion<UserProfileTableData> {
@@ -718,12 +793,14 @@ class UserProfileTableCompanion extends UpdateCompanion<UserProfileTableData> {
   final Value<String> allergiesJson;
   final Value<String> conditionsJson;
   final Value<String> goalsJson;
+  final Value<bool> isSynced;
   const UserProfileTableCompanion({
     this.id = const Value.absent(),
     this.displayName = const Value.absent(),
     this.allergiesJson = const Value.absent(),
     this.conditionsJson = const Value.absent(),
     this.goalsJson = const Value.absent(),
+    this.isSynced = const Value.absent(),
   });
   UserProfileTableCompanion.insert({
     this.id = const Value.absent(),
@@ -731,6 +808,7 @@ class UserProfileTableCompanion extends UpdateCompanion<UserProfileTableData> {
     this.allergiesJson = const Value.absent(),
     this.conditionsJson = const Value.absent(),
     this.goalsJson = const Value.absent(),
+    this.isSynced = const Value.absent(),
   });
   static Insertable<UserProfileTableData> custom({
     Expression<int>? id,
@@ -738,6 +816,7 @@ class UserProfileTableCompanion extends UpdateCompanion<UserProfileTableData> {
     Expression<String>? allergiesJson,
     Expression<String>? conditionsJson,
     Expression<String>? goalsJson,
+    Expression<bool>? isSynced,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -745,6 +824,7 @@ class UserProfileTableCompanion extends UpdateCompanion<UserProfileTableData> {
       if (allergiesJson != null) 'allergies_json': allergiesJson,
       if (conditionsJson != null) 'conditions_json': conditionsJson,
       if (goalsJson != null) 'goals_json': goalsJson,
+      if (isSynced != null) 'is_synced': isSynced,
     });
   }
 
@@ -753,13 +833,15 @@ class UserProfileTableCompanion extends UpdateCompanion<UserProfileTableData> {
       Value<String>? displayName,
       Value<String>? allergiesJson,
       Value<String>? conditionsJson,
-      Value<String>? goalsJson}) {
+      Value<String>? goalsJson,
+      Value<bool>? isSynced}) {
     return UserProfileTableCompanion(
       id: id ?? this.id,
       displayName: displayName ?? this.displayName,
       allergiesJson: allergiesJson ?? this.allergiesJson,
       conditionsJson: conditionsJson ?? this.conditionsJson,
       goalsJson: goalsJson ?? this.goalsJson,
+      isSynced: isSynced ?? this.isSynced,
     );
   }
 
@@ -781,6 +863,9 @@ class UserProfileTableCompanion extends UpdateCompanion<UserProfileTableData> {
     if (goalsJson.present) {
       map['goals_json'] = Variable<String>(goalsJson.value);
     }
+    if (isSynced.present) {
+      map['is_synced'] = Variable<bool>(isSynced.value);
+    }
     return map;
   }
 
@@ -791,7 +876,8 @@ class UserProfileTableCompanion extends UpdateCompanion<UserProfileTableData> {
           ..write('displayName: $displayName, ')
           ..write('allergiesJson: $allergiesJson, ')
           ..write('conditionsJson: $conditionsJson, ')
-          ..write('goalsJson: $goalsJson')
+          ..write('goalsJson: $goalsJson, ')
+          ..write('isSynced: $isSynced')
           ..write(')'))
         .toString();
   }
@@ -827,6 +913,7 @@ typedef $$ScanHistoryTableTableCreateCompanionBuilder
   required String ingredientsJson,
   required String alternativesJson,
   required DateTime scannedAt,
+  Value<bool> isSynced,
   Value<int> rowid,
 });
 typedef $$ScanHistoryTableTableUpdateCompanionBuilder
@@ -840,6 +927,7 @@ typedef $$ScanHistoryTableTableUpdateCompanionBuilder
   Value<String> ingredientsJson,
   Value<String> alternativesJson,
   Value<DateTime> scannedAt,
+  Value<bool> isSynced,
   Value<int> rowid,
 });
 
@@ -880,6 +968,9 @@ class $$ScanHistoryTableTableFilterComposer
 
   ColumnFilters<DateTime> get scannedAt => $composableBuilder(
       column: $table.scannedAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get isSynced => $composableBuilder(
+      column: $table.isSynced, builder: (column) => ColumnFilters(column));
 }
 
 class $$ScanHistoryTableTableOrderingComposer
@@ -920,6 +1011,9 @@ class $$ScanHistoryTableTableOrderingComposer
 
   ColumnOrderings<DateTime> get scannedAt => $composableBuilder(
       column: $table.scannedAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get isSynced => $composableBuilder(
+      column: $table.isSynced, builder: (column) => ColumnOrderings(column));
 }
 
 class $$ScanHistoryTableTableAnnotationComposer
@@ -957,6 +1051,9 @@ class $$ScanHistoryTableTableAnnotationComposer
 
   GeneratedColumn<DateTime> get scannedAt =>
       $composableBuilder(column: $table.scannedAt, builder: (column) => column);
+
+  GeneratedColumn<bool> get isSynced =>
+      $composableBuilder(column: $table.isSynced, builder: (column) => column);
 }
 
 class $$ScanHistoryTableTableTableManager extends RootTableManager<
@@ -996,6 +1093,7 @@ class $$ScanHistoryTableTableTableManager extends RootTableManager<
             Value<String> ingredientsJson = const Value.absent(),
             Value<String> alternativesJson = const Value.absent(),
             Value<DateTime> scannedAt = const Value.absent(),
+            Value<bool> isSynced = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               ScanHistoryTableCompanion(
@@ -1008,6 +1106,7 @@ class $$ScanHistoryTableTableTableManager extends RootTableManager<
             ingredientsJson: ingredientsJson,
             alternativesJson: alternativesJson,
             scannedAt: scannedAt,
+            isSynced: isSynced,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -1020,6 +1119,7 @@ class $$ScanHistoryTableTableTableManager extends RootTableManager<
             required String ingredientsJson,
             required String alternativesJson,
             required DateTime scannedAt,
+            Value<bool> isSynced = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               ScanHistoryTableCompanion.insert(
@@ -1032,6 +1132,7 @@ class $$ScanHistoryTableTableTableManager extends RootTableManager<
             ingredientsJson: ingredientsJson,
             alternativesJson: alternativesJson,
             scannedAt: scannedAt,
+            isSynced: isSynced,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
@@ -1064,6 +1165,7 @@ typedef $$UserProfileTableTableCreateCompanionBuilder
   Value<String> allergiesJson,
   Value<String> conditionsJson,
   Value<String> goalsJson,
+  Value<bool> isSynced,
 });
 typedef $$UserProfileTableTableUpdateCompanionBuilder
     = UserProfileTableCompanion Function({
@@ -1072,6 +1174,7 @@ typedef $$UserProfileTableTableUpdateCompanionBuilder
   Value<String> allergiesJson,
   Value<String> conditionsJson,
   Value<String> goalsJson,
+  Value<bool> isSynced,
 });
 
 class $$UserProfileTableTableFilterComposer
@@ -1098,6 +1201,9 @@ class $$UserProfileTableTableFilterComposer
 
   ColumnFilters<String> get goalsJson => $composableBuilder(
       column: $table.goalsJson, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get isSynced => $composableBuilder(
+      column: $table.isSynced, builder: (column) => ColumnFilters(column));
 }
 
 class $$UserProfileTableTableOrderingComposer
@@ -1125,6 +1231,9 @@ class $$UserProfileTableTableOrderingComposer
 
   ColumnOrderings<String> get goalsJson => $composableBuilder(
       column: $table.goalsJson, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get isSynced => $composableBuilder(
+      column: $table.isSynced, builder: (column) => ColumnOrderings(column));
 }
 
 class $$UserProfileTableTableAnnotationComposer
@@ -1150,6 +1259,9 @@ class $$UserProfileTableTableAnnotationComposer
 
   GeneratedColumn<String> get goalsJson =>
       $composableBuilder(column: $table.goalsJson, builder: (column) => column);
+
+  GeneratedColumn<bool> get isSynced =>
+      $composableBuilder(column: $table.isSynced, builder: (column) => column);
 }
 
 class $$UserProfileTableTableTableManager extends RootTableManager<
@@ -1185,6 +1297,7 @@ class $$UserProfileTableTableTableManager extends RootTableManager<
             Value<String> allergiesJson = const Value.absent(),
             Value<String> conditionsJson = const Value.absent(),
             Value<String> goalsJson = const Value.absent(),
+            Value<bool> isSynced = const Value.absent(),
           }) =>
               UserProfileTableCompanion(
             id: id,
@@ -1192,6 +1305,7 @@ class $$UserProfileTableTableTableManager extends RootTableManager<
             allergiesJson: allergiesJson,
             conditionsJson: conditionsJson,
             goalsJson: goalsJson,
+            isSynced: isSynced,
           ),
           createCompanionCallback: ({
             Value<int> id = const Value.absent(),
@@ -1199,6 +1313,7 @@ class $$UserProfileTableTableTableManager extends RootTableManager<
             Value<String> allergiesJson = const Value.absent(),
             Value<String> conditionsJson = const Value.absent(),
             Value<String> goalsJson = const Value.absent(),
+            Value<bool> isSynced = const Value.absent(),
           }) =>
               UserProfileTableCompanion.insert(
             id: id,
@@ -1206,6 +1321,7 @@ class $$UserProfileTableTableTableManager extends RootTableManager<
             allergiesJson: allergiesJson,
             conditionsJson: conditionsJson,
             goalsJson: goalsJson,
+            isSynced: isSynced,
           ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))

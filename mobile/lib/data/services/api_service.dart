@@ -1,5 +1,5 @@
 import 'package:dio/dio.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../core/config/app_config.dart';
 import '../../features/scanner/models/scan_result_model.dart';
 import '../../core/services/safety_score_service.dart';
@@ -14,19 +14,52 @@ class ApiService {
   )) {
     _dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) async {
-        final prefs = await SharedPreferences.getInstance();
-        final token = prefs.getString('auth_token');
-        if (token != null) {
-          options.headers['Authorization'] = 'Bearer $token';
+        final user = FirebaseAuth.instance.currentUser;
+        if (user != null) {
+          try {
+            final token = await user.getIdToken();
+            if (token != null) {
+              options.headers['Authorization'] = 'Bearer $token';
+            }
+          } catch (e) {
+            print('Error getting Firebase token: $e');
+          }
         }
         return handler.next(options);
       },
       onError: (DioException e, handler) async {
-        // Simple retry once on 401
         if (e.response?.statusCode == 401 && e.requestOptions.extra['retried'] != true) {
           e.requestOptions.extra['retried'] = true;
-          // In a real app, you'd refresh token here
-          return handler.resolve(await _dio.fetch(e.requestOptions));
+          
+          final user = FirebaseAuth.instance.currentUser;
+          if (user != null) {
+            try {
+              // Force token refresh
+              final newToken = await user.getIdToken(true);
+              if (newToken != null) {
+                // Update header
+                e.requestOptions.headers['Authorization'] = 'Bearer $newToken';
+                // Retry request
+                final response = await _dio.fetch(e.requestOptions);
+                return handler.resolve(response);
+              }
+            } catch (refreshError) {
+              // If token refresh fails, reject with clear message
+              return handler.reject(DioException(
+                requestOptions: e.requestOptions,
+                error: 'Authentication expired. Please sign in again.',
+                type: DioExceptionType.badResponse,
+              ));
+            }
+          }
+        }
+        // Surface the error clearly if not handled above or if it still fails after retry
+        if (e.response?.statusCode == 401) {
+           return handler.reject(DioException(
+            requestOptions: e.requestOptions,
+            error: 'Authentication failed.',
+            type: DioExceptionType.badResponse,
+          ));
         }
         return handler.next(e);
       },
@@ -147,6 +180,67 @@ class ApiService {
       case 3: return NovaGroup.group3;
       case 4: return NovaGroup.group4;
       default: return NovaGroup.group4;
+    }
+  }
+
+  // ── User Profile Endpoints ───────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>?> getUserProfile() async {
+    try {
+      final response = await _dio.get('/users/me');
+      if (response.statusCode == 200) {
+        return response.data;
+      }
+    } catch (e) {
+      print('Cloud Get Profile Error: $e');
+    }
+    return null;
+  }
+
+  Future<bool> patchUserProfile(Map<String, dynamic> data) async {
+    try {
+      final response = await _dio.patch('/users/me', data: data);
+      return response.statusCode == 200;
+    } catch (e) {
+      print('Cloud Patch Profile Error: $e');
+      return false;
+    }
+  }
+
+  // ── Scan History Endpoints ───────────────────────────────────────────────────
+
+  Future<List<Map<String, dynamic>>?> getScanHistory({int limit = 20, int offset = 0}) async {
+    try {
+      final response = await _dio.get('/history', queryParameters: {
+        'limit': limit,
+        'offset': offset,
+      });
+      if (response.statusCode == 200) {
+        return List<Map<String, dynamic>>.from(response.data);
+      }
+    } catch (e) {
+      print('Cloud Get History Error: $e');
+    }
+    return null;
+  }
+
+  Future<bool> deleteScanHistoryItem(String id) async {
+    try {
+      final response = await _dio.delete('/history/$id');
+      return response.statusCode == 204 || response.statusCode == 200;
+    } catch (e) {
+      print('Cloud Delete History Error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> postScanHistory(Map<String, dynamic> scanData) async {
+    try {
+      final response = await _dio.post('/history', data: scanData);
+      return response.statusCode == 200 || response.statusCode == 201;
+    } catch (e) {
+      print('Cloud Post History Error: $e');
+      return false;
     }
   }
 }
