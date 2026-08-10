@@ -19,11 +19,15 @@ class Settings(BaseSettings):
         """Ensure PostgreSQL URLs always use the asyncpg driver.
         Neon and Render both return 'postgres://' or 'postgresql://' by default;
         SQLAlchemy's async engine requires 'postgresql+asyncpg://'.
+        Also rewrite ?sslmode=require → ?ssl=require because asyncpg does not
+        accept the libpq-style 'sslmode' query parameter.
         """
         if v.startswith("postgres://"):
-            return v.replace("postgres://", "postgresql+asyncpg://", 1)
-        if v.startswith("postgresql://") and "+asyncpg" not in v:
-            return v.replace("postgresql://", "postgresql+asyncpg://", 1)
+            v = v.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif v.startswith("postgresql://") and "+asyncpg" not in v:
+            v = v.replace("postgresql://", "postgresql+asyncpg://", 1)
+        # asyncpg uses ?ssl=require, not ?sslmode=require
+        v = v.replace("sslmode=require", "ssl=require")
         return v
 
     class Config:
