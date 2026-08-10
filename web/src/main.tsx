@@ -11,7 +11,7 @@ bootstrapAuth();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <BrowserRouter>
+    <BrowserRouter basename="/nutriscan-ai/">
       <App />
     </BrowserRouter>
   </StrictMode>,
