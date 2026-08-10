@@ -1,29 +1,39 @@
 # Deploying NutriScan AI Backend
 
-This guide outlines how to deploy the NutriScan AI backend to a production environment using **Render**, a popular and developer-friendly PaaS. Render can natively host our Dockerized application alongside a managed PostgreSQL database and a Redis instance.
+This guide outlines how to deploy the NutriScan AI backend to a production environment using **Render** (for hosting the API and key-value cache) and **Neon.tech** (for the managed serverless PostgreSQL database).
 
 ## Prerequisites
 
 1. A [Render account](https://render.com/).
 2. Your repository pushed to GitHub or GitLab.
 
-## 1. Set up the Managed PostgreSQL Database
+## 1. Set up the PostgreSQL Database (Neon.tech)
 
-1. In the Render Dashboard, click **New +** and select **PostgreSQL**.
-2. Name it (e.g., `nutriscan-db`).
-3. Choose the region closest to your users.
-4. Select the Free or Starter tier.
-5. Click **Create Database**.
-6. Once created, copy the **Internal Database URL** (e.g., `postgresql://...`). You will need this for the backend service.
+> Neon offers a generous free tier with serverless Postgres and a built-in connection pooler.
 
-## 2. Set up the Redis Instance
+1. Go to [neon.tech](https://neon.tech/) and sign in (or create a free account).
+2. Click **New Project**, name it (e.g., `nutriscan`), and choose your nearest region.
+3. In the **Connection Details** panel, click the **Pooled connection** tab.
+4. Copy the connection string — it looks like:
+   ```
+   postgres://user:password@ep-xxx.region.aws.neon.tech/neondb?sslmode=require
+   ```
+5. **Change the scheme** to `postgresql+asyncpg://` before using it as `DATABASE_URL`:
+   ```
+   postgresql+asyncpg://user:password@ep-xxx.region.aws.neon.tech/neondb?sslmode=require
+   ```
 
-1. In the Render Dashboard, click **New +** and select **Redis**.
-2. Name it (e.g., `nutriscan-redis`).
-3. Choose the same region as your database.
-4. Select the Free tier.
-5. Click **Create Redis**.
-6. Once created, copy the **Internal Redis URL** (e.g., `redis://...`). You will need this for the backend service.
+> **Important:** Always use the **pooled** connection string to avoid exhausting Neon's connection limits on the free tier.
+
+## 2. Set up the Key Value (Redis) Instance on Render
+
+> Render no longer offers a standalone Redis service. Use the **Key Value** service instead — it is fully Redis-compatible.
+
+1. In the Render Dashboard, click **New +** and select **Key Value**.
+2. Name it (e.g., `nutriscan-kv`).
+3. Choose the **same region** as your Web Service.
+4. Click **Create Key Value**.
+5. Once created, open the Key Value's **Info** page and copy the **Internal Redis URL** (starts with `redis://`). You will use this as `REDIS_URL`.
 
 ## 3. Deploy the Backend Web Service
 
@@ -39,8 +49,8 @@ This guide outlines how to deploy the NutriScan AI backend to a production envir
 | --- | ----- | ----- |
 | `PROJECT_NAME` | `NutriScan AI Backend` | Or your preferred name |
 | `ENVIRONMENT` | `production` | Turns off SQLAlchemy echo and enables prod defaults |
-| `DATABASE_URL` | *(Paste Internal Database URL)* | Must start with `postgresql+asyncpg://...` (Render gives you `postgres://...`, so **change `postgres://` to `postgresql+asyncpg://`**) |
-| `REDIS_URL` | *(Paste Internal Redis URL)* | e.g. `redis://red-xxx:6379` |
+| `DATABASE_URL` | *(Paste Neon pooled connection string)* | Must start with `postgresql+asyncpg://...` and include `?sslmode=require`. Neon gives `postgres://...` — change the scheme accordingly |
+| `REDIS_URL` | *(Paste Internal Redis URL from Render Key Value)* | e.g. `redis://red-xxx:6379` |
 | `SECRET_KEY` | *(A strong random string)* | Use `python -c "import secrets; print(secrets.token_urlsafe(32))"` locally to generate one |
 | `ALGORITHM` | `HS256` | |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | Or your preferred duration |
@@ -71,5 +81,5 @@ Once the backend is live, Render will give you a public URL (e.g., `https://nutr
 
 ## Monitoring
 
-- You can hit the `https://nutriscan-api.onrender.com/health` endpoint to ensure the DB and Redis are connected successfully.
+- You can hit the `https://nutriscan-api.onrender.com/health` endpoint to ensure the DB (Neon.tech) and Redis cache (Render Key Value) are connected successfully.
 - All request logs and unhandled exceptions (with full stack traces) will now stream directly to your Render Logs tab, while returning clean JSON errors to your app.

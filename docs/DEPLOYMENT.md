@@ -31,7 +31,7 @@ NutriScan AI is a monorepo with three main components:
 | `web/`     | Browser-based companion app                  | React · Vite · TypeScript     |
 | `mobile/`  | Cross-platform mobile app                    | Flutter                       |
 
-The backend requires a **PostgreSQL** database, a **Redis** cache, and a **Firebase** service account (for verifying user identity tokens). The web frontend requires only the Firebase Web SDK keys and the backend API URL.
+The backend requires a **PostgreSQL** database (hosted on [Neon.tech](https://neon.tech/)), a **Redis-compatible** key-value cache (hosted on Render's Key Value service), and a **Firebase** service account (for verifying user identity tokens). The web frontend requires only the Firebase Web SDK keys and the backend API URL.
 
 ---
 
@@ -164,21 +164,35 @@ The web app will be available at **`http://localhost:5173`**.
 
 ## 5. Production Deployment — Backend (Render)
 
-[Render](https://render.com/) is a simple PaaS that can build and host the Dockerised backend, with managed PostgreSQL and Redis available on the free tier.
+[Render](https://render.com/) is a simple PaaS that can build and host the Dockerised backend. We use **Neon.tech** for the managed PostgreSQL database and Render's built-in **Key Value** service for the Redis-compatible cache.
 
-### Step 1 — Create the PostgreSQL Database
+### Step 1 — Create the Neon.tech PostgreSQL Database
 
-1. In the Render Dashboard, click **New +** → **PostgreSQL**.
-2. Name it (e.g., `nutriscan-db`), choose your nearest region, and click **Create Database**.
-3. After creation, copy the **Internal Database URL** from the dashboard.
+> **Why Neon?** Neon offers a generous free tier with serverless Postgres, branching, and a connection pooler — all without needing to provision Render's own Postgres service.
 
-> **Important:** Render gives you a URL starting with `postgres://`. You **must** change the scheme to `postgresql+asyncpg://` before pasting it into your backend environment variables.
+1. Go to [neon.tech](https://neon.tech/) and sign in (or create a free account).
+2. Click **New Project**, give it a name (e.g., `nutriscan`), and choose your nearest region.
+3. Once created, open the **Connection Details** panel and select the **Pooled connection** tab.
+4. Copy the connection string — it will look like:
+   ```
+   postgres://user:password@ep-xxx.us-east-2.aws.neon.tech/neondb?sslmode=require
+   ```
+5. **Change the scheme** from `postgres://` to `postgresql+asyncpg://` before using it as `DATABASE_URL`:
+   ```
+   postgresql+asyncpg://user:password@ep-xxx.us-east-2.aws.neon.tech/neondb?sslmode=require
+   ```
 
-### Step 2 — Create the Redis Instance
+> **Important:** Always use the **pooled** connection string (not the direct one) to avoid exhausting Neon's connection limits on the free tier.
 
-1. In the Render Dashboard, click **New +** → **Redis**.
-2. Name it (e.g., `nutriscan-redis`), choose the same region, and click **Create Redis**.
-3. After creation, copy the **Internal Redis URL** (starts with `redis://`).
+### Step 2 — Create the Render Key Value (Redis) Instance
+
+Render does not offer a standalone Redis service; instead it provides a **Key Value** store that is fully Redis-compatible.
+
+1. In the Render Dashboard, click **New +** → **Key Value**.
+2. Name it (e.g., `nutriscan-kv`), choose the **same region** as your Web Service, and click **Create Key Value**.
+3. After creation, go to the Key Value's **Info** page and copy the **Internal Redis URL** (starts with `redis://`).
+
+> **Note:** The Key Value service URL is a drop-in replacement for a standard Redis URL. No code changes are needed — simply paste it as the `REDIS_URL` environment variable.
 
 ### Step 3 — Deploy the Backend Web Service
 
@@ -197,8 +211,8 @@ The web app will be available at **`http://localhost:5173`**.
 |-----|-------|
 | `PROJECT_NAME` | `NutriScan AI Backend` |
 | `ENVIRONMENT` | `production` |
-| `DATABASE_URL` | Your Internal Database URL (with `postgresql+asyncpg://` scheme) |
-| `REDIS_URL` | Your Internal Redis URL |
+| `DATABASE_URL` | Your Neon pooled connection string (with `postgresql+asyncpg://` scheme and `?sslmode=require`) |
+| `REDIS_URL` | Internal Redis URL from your Render Key Value service |
 | `SECRET_KEY` | A strong random string — generate with: `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
 | `ALGORITHM` | `HS256` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `30` |
@@ -258,8 +272,8 @@ Your API will be live at a URL like `https://nutriscan-api.onrender.com`.
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `PROJECT_NAME` | No | `NutriScan AI Backend` | Display name in API docs |
-| `DATABASE_URL` | **Yes** | — | Full SQLAlchemy DB URL. Use `sqlite+aiosqlite:///./nutriscan.db` for local dev, `postgresql+asyncpg://...` for prod |
-| `REDIS_URL` | **Yes** | — | Redis connection URL. Errors are non-fatal in dev |
+| `DATABASE_URL` | **Yes** | — | Full SQLAlchemy DB URL. Use `sqlite+aiosqlite:///./nutriscan.db` for local dev; in production use the Neon pooled connection string: `postgresql+asyncpg://user:pass@host/db?sslmode=require` |
+| `REDIS_URL` | **Yes** | — | Redis-compatible connection URL. In production, use the Internal Redis URL from your Render Key Value service. Connection errors are non-fatal in dev (logged as warnings). |
 | `SECRET_KEY` | **Yes** | — | JWT signing secret. Must be a long, random string in production |
 | `ALGORITHM` | No | `HS256` | JWT algorithm |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | No | `30` | JWT token lifetime in minutes |
@@ -292,6 +306,7 @@ curl https://nutriscan-api.onrender.com/health
 
 # Expected response:
 # {"status":"ok","db":"ok","redis":"ok","environment":"production"}
+# Note: "db" reflects the Neon.tech PostgreSQL connection; "redis" reflects the Render Key Value connection.
 
 # 2. Check the API docs are accessible
 # Visit: https://nutriscan-api.onrender.com/docs
