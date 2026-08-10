@@ -3,6 +3,7 @@ import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { apiClient } from '../../lib/apiClient';
 import type { ScanResponse, ScanHistoryResponse, IngredientResult, ScoreBreakdown } from '../../lib/types';
 import { scoreColor, scoreLabel } from '../../lib/types';
+import { BarChart2, AlertTriangle, Factory, Microscope, HeartPulse, AlertCircle, ArrowLeft } from 'lucide-react';
 
 // ── Normalised shape ──────────────────────────────────────────────────────────
 interface ResultData {
@@ -169,7 +170,7 @@ const NovaClassificationBadge = ({ novaClass }: { novaClass: number }) => {
 };
 
 // ── SafetyScoreBreakdownCard ──────────────────────────────────────────────────
-const BreakdownRow = ({ icon, label, deduction }: { icon: string; label: string; deduction: number }) => (
+const BreakdownRow = ({ icon, label, deduction }: { icon: React.ReactNode; label: string; deduction: number }) => (
   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
     <span>{icon}</span>
     <span style={{ flex: 1, fontSize: 13, color: 'var(--color-text-primary)' }}>{label}</span>
@@ -196,7 +197,7 @@ const SafetyScoreBreakdownCard = ({ breakdown }: { breakdown: ScoreBreakdown }) 
           backgroundColor: 'rgba(214,228,223,0.4)',
           display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
         }}>
-          📊
+          <BarChart2 size={20} color="var(--color-medium-green)" />
         </div>
         <div style={{ flex: 1 }}>
           <p style={{ fontWeight: 700, fontSize: 14, color: 'var(--color-text-primary)', margin: 0 }}>
@@ -212,10 +213,10 @@ const SafetyScoreBreakdownCard = ({ breakdown }: { breakdown: ScoreBreakdown }) 
       {expanded && (
         <div style={{ padding: '0 1rem 1rem', borderTop: '1px solid var(--color-divider)' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', paddingTop: '0.75rem' }}>
-            <BreakdownRow icon="⚠️" label="Allergens"           deduction={breakdown.allergenDeduction} />
-            <BreakdownRow icon="🏭" label="NOVA Processing"     deduction={breakdown.novaDeduction} />
-            <BreakdownRow icon="🔬" label="Additives"           deduction={breakdown.additiveDeduction} />
-            <BreakdownRow icon="🫀" label="Personal Conditions"  deduction={breakdown.conditionDeduction} />
+            <BreakdownRow icon={<AlertTriangle size={16} color="var(--color-flagged-red)" />} label="Allergens"           deduction={breakdown.allergenDeduction} />
+            <BreakdownRow icon={<Factory size={16} color="var(--color-text-secondary)" />} label="NOVA Processing"     deduction={breakdown.novaDeduction} />
+            <BreakdownRow icon={<Microscope size={16} color="var(--color-text-secondary)" />} label="Additives"           deduction={breakdown.additiveDeduction} />
+            <BreakdownRow icon={<HeartPulse size={16} color="var(--color-flagged-red)" />} label="Personal Conditions"  deduction={breakdown.conditionDeduction} />
           </div>
         </div>
       )}
@@ -366,7 +367,9 @@ const IngredientAnalysisCard = ({ ingredients }: { ingredients: IngredientResult
             <div key={i}>
               <div style={{ padding: '0.75rem 1rem', display: 'flex', gap: '0.625rem', alignItems: 'flex-start' }}>
                 {isDanger || isCaution ? (
-                  <span style={{ fontSize: 16, marginTop: 1, flexShrink: 0 }}>{isDanger ? '⚠️' : '🔶'}</span>
+                  <span style={{ marginTop: 2, flexShrink: 0 }}>
+                    {isDanger ? <AlertTriangle size={16} color="var(--color-flagged-red)" /> : <AlertCircle size={16} color="var(--color-caution-amber)" />}
+                  </span>
                 ) : (
                   <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: 'var(--color-safe-green)', marginTop: 6, marginLeft: 4, flexShrink: 0 }} />
                 )}
@@ -495,7 +498,7 @@ export default function ResultsPage() {
             color: '#fff', fontSize: 14, fontWeight: 500, cursor: 'pointer',
           }}
         >
-          ← Back
+          <ArrowLeft size={16} /> Back
         </button>
         <h1 style={{ fontSize: 17, fontWeight: 600, color: '#fff', margin: 0 }}>Scan Results</h1>
         <div style={{ width: 80 }} />

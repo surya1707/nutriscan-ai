@@ -95,19 +95,44 @@ body {
   background-color: var(--color-card-bg);
   border-radius: var(--radius-card);
   border: 1px solid var(--color-divider);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+
+/* Glass Card */
+.glass-card {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: var(--radius-card);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+}
+
+/* Gradients */
+.bg-gradient-premium {
+  background: linear-gradient(135deg, var(--color-dark-green) 0%, #1a3328 100%);
+}
+.bg-gradient-accent {
+  background: linear-gradient(135deg, var(--color-medium-green) 0%, var(--color-dark-green) 100%);
 }
 
 /* Input */
 .input {
   width: 100%;
-  background-color: var(--color-card-bg);
+  background-color: rgba(255, 255, 255, 0.9);
   border: 1px solid var(--color-divider);
   border-radius: var(--radius-card);
   padding: 0.875rem 1rem;
   font-size: var(--text-body-lg);
   color: var(--color-text-primary);
   outline: none;
-  transition: border-color 150ms ease;
+  transition: all 0.2s ease;
+  box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.02);
 }
 .input::placeholder {
   color: var(--color-text-muted);
@@ -115,6 +140,7 @@ body {
 .input:focus {
   border-color: var(--color-medium-green);
   border-width: 1.5px;
+  box-shadow: 0 0 0 4px rgba(74, 124, 111, 0.1);
 }
 
 /* Primary button */
@@ -123,7 +149,7 @@ body {
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  background-color: var(--color-dark-green);
+  background: linear-gradient(135deg, var(--color-dark-green) 0%, var(--color-medium-green) 100%);
   color: #fff;
   font-size: var(--text-body-lg);
   font-weight: 600;
@@ -131,11 +157,18 @@ body {
   border-radius: var(--radius-card);
   border: none;
   cursor: pointer;
-  transition: background-color 150ms ease, opacity 150ms ease;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 6px rgba(45, 74, 62, 0.2);
 }
-.btn-primary:hover  { background-color: var(--color-medium-green); }
-.btn-primary:active { opacity: 0.85; }
-.btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-primary:hover  { 
+  box-shadow: 0 6px 12px rgba(45, 74, 62, 0.3);
+  transform: translateY(-1px);
+}
+.btn-primary:active { 
+  transform: translateY(1px);
+  box-shadow: 0 2px 4px rgba(45, 74, 62, 0.2);
+}
+.btn-primary:disabled { opacity: 0.45; cursor: not-allowed; transform: none; box-shadow: none; }
 
 /* Ghost / secondary button */
 .btn-ghost {

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../../lib/apiClient';
 import type { ScanResponse } from '../../lib/types';
+import { Barcode, ClipboardPaste, CameraOff } from 'lucide-react';
 
 type Tab = 'barcode' | 'ingredients';
 
@@ -91,9 +92,11 @@ export default function ScanPage() {
               cursor: 'pointer',
               transition: 'all 150ms ease',
               boxShadow: tab === t ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
-            }}
-          >
-            {t === 'barcode' ? '🔢 Enter barcode' : '📋 Paste ingredients'}
+            }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.375rem' }}>
+              {t === 'barcode' ? <Barcode size={18} /> : <ClipboardPaste size={18} />}
+              <span>{t === 'barcode' ? 'Enter barcode' : 'Paste ingredients'}</span>
+            </div>
           </button>
         ))}
       </div>
@@ -155,16 +158,21 @@ export default function ScanPage() {
       {tab === 'ingredients' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           {/* Transparency notice */}
-          <div style={{
+          <div className="card" style={{
             backgroundColor: '#fdf3e0',
-            border: '1px solid var(--color-caution-amber)',
-            borderRadius: 'var(--radius-card)',
+            borderColor: 'var(--color-caution-amber)',
             padding: '0.75rem 1rem',
             fontSize: 'var(--text-body-md)',
             color: '#7a5000',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '0.75rem'
           }}>
-            <strong>📸 Web note:</strong> There is no live camera or OCR on the web version.
-            Please copy the ingredients text from the product label manually and paste it below.
+            <CameraOff size={20} style={{ flexShrink: 0, marginTop: '0.125rem' }} />
+            <div>
+              <strong>Web note:</strong> There is no live camera or OCR on the web version.
+              Please copy the ingredients text from the product label manually and paste it below.
+            </div>
           </div>
 
           <div>

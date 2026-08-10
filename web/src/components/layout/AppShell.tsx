@@ -1,35 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuthStore, AuthStatus } from '../../store/authStore';
-
-// ── Icon components (inline SVG, matching mobile/lib/shared/widgets/main_shell.dart) ─
-
-const EcoIcon = ({ filled }: { filled?: boolean }) => (
-  <svg width="22" height="22" viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'} stroke={filled ? 'none' : 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M17 8C8 10 5.9 16.17 3.82 19.88C3.19 21.02 4.14 22 5.37 22C5.79 22 6.22 21.84 6.52 21.54C9.35 18.67 11 15.03 12.53 11.4C13.32 12.03 14.04 12.73 14.71 13.48L17 8Z"/>
-    <path d="M19 3C19 3 15 5 14 10C16 9.5 19 7 21 5C20.5 4.5 19 3 19 3Z"/>
-  </svg>
-);
-
-const HistoryIcon = ({ filled }: { filled?: boolean }) => (
-  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={filled ? '2.2' : '1.8'} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
-    <path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>
-  </svg>
-);
-
-const PersonIcon = ({ filled }: { filled?: boolean }) => (
-  <svg width="22" height="22" viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'} stroke={filled ? 'none' : 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-    <circle cx="12" cy="7" r="4"/>
-  </svg>
-);
-
-const ChevronDown = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="m6 9 6 6 6-6"/>
-  </svg>
-);
+import { Leaf, Clock, User, ChevronDown, LogOut, Menu, LogIn } from 'lucide-react';
 
 // ── NavItem ───────────────────────────────────────────────────────────────────
 
@@ -123,10 +95,10 @@ const UserAvatar = () => {
             fontWeight: 600,
             fontSize: '0.9375rem',
           }}>
-            {isGuest ? <PersonIcon /> : initial}
+            {isGuest ? <User size={20} /> : initial}
           </div>
         )}
-        <ChevronDown />
+        <ChevronDown size={16} />
       </button>
 
       {open && (
@@ -166,7 +138,10 @@ const UserAvatar = () => {
               color: isGuest ? 'var(--color-text-secondary)' : 'var(--color-flagged-red)',
             }}
           >
-            {isGuest ? 'Sign In' : 'Sign Out'}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              {isGuest ? <LogIn size={16} /> : <LogOut size={16} />}
+              <span>{isGuest ? 'Sign In' : 'Sign Out'}</span>
+            </div>
           </button>
         </div>
       )}
@@ -177,9 +152,9 @@ const UserAvatar = () => {
 // ── AppShell ──────────────────────────────────────────────────────────────────
 
 const NAV_ITEMS: NavItemProps[] = [
-  { to: '/',        label: 'Home',    icon: (a) => <EcoIcon filled={a} /> },
-  { to: '/history', label: 'History', icon: (a) => <HistoryIcon filled={a} /> },
-  { to: '/profile', label: 'Profile', icon: (a) => <PersonIcon filled={a} /> },
+  { to: '/',        label: 'Home',    icon: (a) => <Leaf size={22} fill={a ? 'currentColor' : 'none'} strokeWidth={a ? 2 : 1.5} /> },
+  { to: '/history', label: 'History', icon: (a) => <Clock size={22} fill={a ? 'currentColor' : 'none'} strokeWidth={a ? 2 : 1.5} /> },
+  { to: '/profile', label: 'Profile', icon: (a) => <User size={22} fill={a ? 'currentColor' : 'none'} strokeWidth={a ? 2 : 1.5} /> },
 ];
 
 export default function AppShell() {
@@ -208,7 +183,7 @@ export default function AppShell() {
               backgroundColor: 'var(--color-light-green)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
-              <EcoIcon />
+              <Leaf size={20} color="var(--color-medium-green)" />
             </div>
             <span style={{
               fontSize: 'var(--text-title)',
@@ -254,11 +229,7 @@ export default function AppShell() {
               padding: '0.25rem', color: 'var(--color-text-primary)',
             }}
           >
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-              <line x1="4" y1="6" x2="20" y2="6"/>
-              <line x1="4" y1="12" x2="20" y2="12"/>
-              <line x1="4" y1="18" x2="20" y2="18"/>
-            </svg>
+            <Menu size={24} />
           </button>
 
           <span style={{
@@ -323,7 +294,7 @@ export default function AppShell() {
                 backgroundColor: 'var(--color-light-green)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}>
-                <EcoIcon />
+                <Leaf size={20} color="var(--color-medium-green)" />
               </div>
               <span style={{ fontWeight: 700, color: 'var(--color-dark-green)', fontSize: 'var(--text-title)' }}>
                 NutriScan

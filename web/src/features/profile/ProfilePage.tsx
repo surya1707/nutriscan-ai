@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../../lib/apiClient';
 import { useAuthStore, AuthStatus } from '../../store/authStore';
 import type { UserProfileResponse, UserProfileUpdateRequest } from '../../lib/types';
+import { Lock, Save, LogOut } from 'lucide-react';
 
 // ── Exact lists from mobile/lib/features/profile/screens/profile_screen.dart ─
 const ALLERGIES = [
@@ -171,11 +172,7 @@ export default function ProfilePage() {
           aria-label="Sign out"
           style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0.375rem', color: 'var(--color-flagged-red)' }}
         >
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-            <polyline points="16 17 21 12 16 7"/>
-            <line x1="21" y1="12" x2="9" y2="12"/>
-          </svg>
+          <LogOut size={22} />
         </button>
       </div>
 
@@ -188,7 +185,7 @@ export default function ProfilePage() {
           marginBottom: '1.25rem',
           display: 'flex', alignItems: 'center', gap: '0.75rem',
         }}>
-          <span style={{ fontSize: 22 }}>🔒</span>
+          <Lock size={22} color="var(--color-dark-green)" style={{ flexShrink: 0 }} />
           <div>
             <p style={{ fontWeight: 600, fontSize: 'var(--text-body-md)', color: 'var(--color-dark-green)', margin: 0 }}>
               Sign in to sync your profile
@@ -204,11 +201,11 @@ export default function ProfilePage() {
       )}
 
       {/* Preview banner */}
-      <div style={{
-        backgroundColor: 'var(--color-dark-green)',
+      <div className="bg-gradient-premium" style={{
         borderRadius: 16,
         padding: '1.25rem',
         marginBottom: '2rem',
+        boxShadow: '0 10px 30px -10px rgba(45,74,62,0.4)',
       }}>
         <p className="text-label" style={{ color: 'rgba(255,255,255,0.6)', marginBottom: '0.25rem' }}>
           HEALTH PROFILE
@@ -293,7 +290,12 @@ export default function ProfilePage() {
                 }} />
                 Saving…
               </>
-            ) : '💾 Save profile'}
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Save size={18} />
+                <span>Save profile</span>
+              </div>
+            )}
           </button>
           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>

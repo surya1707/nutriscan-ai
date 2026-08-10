@@ -4,6 +4,7 @@ import { apiClient } from '../../lib/apiClient';
 import { useAuthStore, AuthStatus } from '../../store/authStore';
 import type { ScanHistoryResponse } from '../../lib/types';
 import { scoreColor } from '../../lib/types';
+import { History } from 'lucide-react';
 
 const PAGE_SIZE = 20;
 
@@ -23,7 +24,7 @@ const ScanCard = ({ scan, onClick }: { scan: ScanHistoryResponse; onClick: () =>
   const bgColor = score >= 70 ? '#eaf7f0' : score >= 45 ? '#fdf3e0' : '#fde8e6';
 
   return (
-    <div onClick={onClick} className="card" style={{
+    <div onClick={onClick} className="card card-hover" style={{
       padding: '0.875rem 1rem',
       display: 'flex', alignItems: 'center', gap: '0.875rem',
       cursor: 'pointer', transition: 'opacity 120ms ease',
@@ -119,9 +120,7 @@ export default function HistoryPage() {
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             margin: '0 auto 0.875rem',
           }}>
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--color-medium-green)" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>
-            </svg>
+            <History size={26} color="var(--color-medium-green)" />
           </div>
           <p style={{ fontWeight: 600, fontSize: 'var(--text-body-lg)', color: 'var(--color-text-primary)', margin: '0 0 0.375rem' }}>
             Sign in to view history
