@@ -199,11 +199,11 @@ Render does not offer a standalone Redis service; instead it provides a **Key Va
 1. Click **New +** → **Web Service** and connect your GitHub/GitLab repo.
 2. Set the **Root Directory** to `backend`.
 3. Set **Environment** to `Docker`.
-4. Set the **Start Command** to:
-   ```bash
-   sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 10000"
+4. **Leave the Start Command blank.** The `Dockerfile` already runs migrations and starts the server via its `CMD` instruction:
+   ```dockerfile
+   CMD alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 10000
    ```
-   *(Render routes traffic to port 10000 by default.)*
+   > **Note:** Do **not** set a custom start command in the Render dashboard — doing so causes a `not found` error (exit code 127) because Render passes the override as a single string to `sh`, bypassing shell interpretation of `&&`.
 
 5. Under **Environment Variables**, add:
 
@@ -347,3 +347,17 @@ The request body format doesn't match what the endpoint expects. Check the reque
 
 ### Render service is slow to respond (free tier)
 Render's free tier spins down services after 15 minutes of inactivity. The first request after a cold start may take 30–60 seconds. Consider upgrading to a paid tier or using an uptime monitoring service (e.g., [UptimeRobot](https://uptimerobot.com/)) to ping `/health` every 10 minutes and keep the service warm.
+
+### `Exited with status 127` on Render (start command not found)
+**Symptom:** Render logs show:
+```
+sh: 1: alembic upgrade head && uvicorn ...: not found
+==> Exited with status 127
+```
+**Cause:** A custom Start Command was set in the Render dashboard (e.g., `sh -c "alembic upgrade head && ..."`). Render passes dashboard start commands as a **single string argument** to `sh`, so the entire compound command is treated as one executable name — not parsed by the shell.
+
+**Fix:** Leave the **Start Command field blank** in Render. The `Dockerfile` uses shell-form `CMD` which is processed correctly:
+```dockerfile
+CMD alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 10000
+```
+

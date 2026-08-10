@@ -60,12 +60,11 @@ This guide outlines how to deploy the NutriScan AI backend to a production envir
 
 8. Click **Create Web Service**.
 
-Render will now build your Docker container. Because we configured our `docker-compose.yml` to run `alembic upgrade head` before starting, you must ensure that your Render start command is configured to run migrations, or you can add a script to `Dockerfile` to do this. However, since Render runs the image directly (not `docker-compose.yml`), you should update the **Start Command** in Render settings to:
-
-```bash
-sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 10000"
-```
-*(Render uses port 10000 by default).*
+> **No custom Start Command needed.** The `Dockerfile` already handles migrations and startup via its `CMD` instruction (shell form, so `&&` is interpreted correctly):
+> ```dockerfile
+> CMD alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 10000
+> ```
+> Setting a start command override in the Render dashboard causes exit code 127 because Render passes it as a single string to `sh`, bypassing shell interpretation of `&&`.
 
 ## 4. Update the Flutter App
 
