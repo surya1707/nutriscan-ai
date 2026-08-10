@@ -1,6 +1,8 @@
 fastapi
 uvicorn
 sqlalchemy
+asyncpg
+psycopg2-binary
 aiosqlite
 pydantic
 pydantic-settings
