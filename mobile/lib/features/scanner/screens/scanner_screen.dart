@@ -342,14 +342,14 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen>
   Widget _buildCameraLayer() {
     if (kIsWeb) {
       return Container(
-        color: AppColors.background,
+        color: AppColors.cream,
         child: Center(
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(24),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(Icons.web, size: 64, color: AppColors.primary),
+                const Icon(Icons.web, size: 64, color: AppColors.darkGreen),
                 const SizedBox(height: 16),
                 const Text(
                   'Web Scanner Mode',
@@ -371,7 +371,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen>
                   icon: const Icon(Icons.upload_file),
                   label: const Text('Upload Label Image'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
+                    backgroundColor: AppColors.darkGreen,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
                   ),
@@ -379,15 +379,15 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen>
                 const SizedBox(height: 16),
                 ElevatedButton.icon(
                   onPressed: () {
-                    _showManualTextDialog();
+                    _showTypeDialog();
                   },
                   icon: const Icon(Icons.edit_note),
                   label: const Text('Enter Ingredients Manually'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.white,
-                    foregroundColor: AppColors.primary,
+                    foregroundColor: AppColors.darkGreen,
                     padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                    side: const BorderSide(color: AppColors.primary),
+                    side: const BorderSide(color: AppColors.darkGreen),
                   ),
                 ),
               ],
