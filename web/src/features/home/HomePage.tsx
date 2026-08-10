@@ -4,7 +4,7 @@ import { apiClient } from '../../lib/apiClient';
 import { useAuthStore, AuthStatus } from '../../store/authStore';
 import type { ScanHistoryResponse, UserProfileResponse } from '../../lib/types';
 import { scoreColor } from '../../lib/types';
-import { ScanBarcode, User, LayoutGrid, CheckCircle2, AlertTriangle, UserCog, ChevronRight, History, Leaf } from 'lucide-react';
+import { ScanBarcode, User, LayoutGrid, CheckCircle2, AlertTriangle, UserCog, ChevronRight, Leaf } from 'lucide-react';
 
 // ── Skeleton block ────────────────────────────────────────────────────────────
 const Skeleton = ({ w = '100%', h = 20, r = 8 }: { w?: string | number; h?: number; r?: number }) => (
