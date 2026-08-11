@@ -128,6 +128,15 @@ def pytest_runtest_makereport(item, call):
     report = outcome.get_result()
     setattr(item, f"rep_{report.when}", report)
 
+    # Attach markers so pytest_runtest_logreport can write them to the
+    # Excel report without needing access to the item object.
+    # Exclude internal pytest markers that add noise (parametrize,
+    # usefixtures, timeout) — keep only domain-specific marks.
+    _SKIP_MARKS = {"parametrize", "usefixtures", "timeout", "skip", "skipif", "xfail"}
+    report._nutriscan_markers = ", ".join(
+        m.name for m in item.own_markers if m.name not in _SKIP_MARKS
+    )
+
     if report.when == "call" and report.failed:
         drv = item.funcargs.get("driver")
         if drv is not None:
@@ -161,6 +170,7 @@ def pytest_runtest_logreport(report):
         "status": status,
         "duration_s": round(getattr(report, "duration", 0.0), 3),
         "module": report.nodeid.split("::")[0],
+        "markers": getattr(report, "_nutriscan_markers", ""),
         "longrepr": str(report.longrepr) if status == "failed" else None,
     }
     pytest.__nutriscan_pending = getattr(pytest, "__nutriscan_pending", [])

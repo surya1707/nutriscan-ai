@@ -26,6 +26,19 @@ except ImportError:
     Workbook = None
 
 
+# ── Colour palette (matches Report-demo.xlsx) ───────────────────────────────
+_HDR_EXECUTED   = "1A5276"   # navy  – Executed Tests header
+_HDR_PASSED     = "1E8449"   # green – Passed header
+_HDR_FAILED     = "C0392B"   # red   – Failed / Defect Summary header
+_HDR_SKIPPED    = "B7950B"   # amber – Skipped header
+
+_STATUS_CELL_COLORS = {
+    "PASSED":  "D5F5E3",   # light green
+    "FAILED":  "FADBD8",   # light red
+    "SKIPPED": "FEF9E7",   # light yellow
+}
+
+
 def load_all_results():
     """Recursive glob — a flat glob missed nested shard output before;
     always search recursively so no worker's file is silently dropped."""
@@ -49,6 +62,7 @@ def summarize(results):
     skipped = counts.get("skipped", 0)
     executed = passed + failed  # skipped tests don't count against pass rate
     pass_rate = round((passed / executed) * 100, 2) if executed else 0.0
+    total_duration = round(sum(r.get("duration_s", 0.0) for r in results), 3)
     by_module = {}
     for r in results:
         mod = r["module"]
@@ -59,13 +73,14 @@ def summarize(results):
         "failed": failed,
         "skipped": skipped,
         "pass_rate": pass_rate,
+        "total_duration_s": total_duration,
         "by_module": {k: dict(v) for k, v in by_module.items()},
     }
 
 
-def write_execution_results_json(results, summary, out_path):
+def write_execution_results_json(results, summary, out_path, run_at=None):
     payload = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": run_at or datetime.now(timezone.utc).isoformat(),
         "base_url": config.BASE_URL,
         "summary": summary,
         "results": results,
@@ -85,6 +100,7 @@ def write_summary_md(summary, out_path):
         f"- **Skipped:** {summary['skipped']}",
         f"- **Pass rate:** {summary['pass_rate']}% "
         f"(threshold: {config.PASS_RATE_THRESHOLD}%)",
+        f"- **Total duration:** {summary['total_duration_s']}s",
         "",
         "## By module",
         "",
@@ -132,6 +148,7 @@ th {{ background: #fafafa; position: sticky; top: 0; }}
   <div class="card" style="background:#fdeceb">Failed<b style="color:#d64545">{summary['failed']}</b></div>
   <div class="card" style="background:#fdf3d9">Skipped<b style="color:#b58900">{summary['skipped']}</b></div>
   <div class="card">Pass rate<b>{summary['pass_rate']}%</b></div>
+  <div class="card">Duration<b>{summary['total_duration_s']}s</b></div>
 </div>
 <table>
 <thead><tr><th>Test</th><th>Status</th><th>Duration</th></tr></thead>
@@ -178,7 +195,8 @@ h1 {{ margin-bottom: 0.25rem; }}
   {summary['pass_rate']}%
 </p>
 <p>Gate: {config.PASS_RATE_THRESHOLD}% required to pass CI &middot;
-   {summary['passed']} passed / {summary['failed']} failed / {summary['skipped']} skipped</p>
+   {summary['passed']} passed / {summary['failed']} failed / {summary['skipped']} skipped &middot;
+   {summary['total_duration_s']}s total</p>
 <h2>By module</h2>
 {bars}
 </body></html>
@@ -187,67 +205,141 @@ h1 {{ margin-bottom: 0.25rem; }}
         fh.write(html)
 
 
-def write_xlsx(results, summary, out_path):
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+def _test_id(nodeid: str) -> str:
+    """Return just the test function name from a full nodeid.
+
+    e.g. 'tests/test_auth_login_page.py::TestLogin::test_foo' → 'test_foo'
+    """
+    return nodeid.split("::")[-1]
+
+
+def _module_label(module_path: str) -> str:
+    """Convert a file-path module key to a human-readable category label.
+
+    The module stored in the result JSON is the first segment of the nodeid,
+    e.g. 'tests/test_auth_login_page.py'.  We strip the path prefix and the
+    'test_' / '.py' affix then title-case the remainder so it reads like the
+    'Module' column in Report-demo.xlsx ('Authentication', 'Authorization', …).
+    """
+    basename = os.path.basename(module_path)        # test_auth_login_page.py
+    stem = basename.replace(".py", "")              # test_auth_login_page
+    if stem.startswith("test_"):
+        stem = stem[5:]                             # auth_login_page
+    return stem.replace("_", " ").title()           # Auth Login Page
+
+
+def _make_header(ws, columns, fill_color):
+    """Write a styled header row to *ws* and freeze pane at A2."""
+    fill = PatternFill("solid", fgColor=fill_color)
+    font = Font(bold=True, color="FFFFFF")
+    align = Alignment(horizontal="center", vertical="center")
+    for col_idx, col_name in enumerate(columns, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=col_name)
+        cell.fill = fill
+        cell.font = font
+        cell.alignment = align
+    ws.freeze_panes = "A2"
+
+
+def write_xlsx(results, summary, out_path, run_at=None):
+    """Produce Automation_Test_Report.xlsx matching Report-demo.xlsx exactly."""
     if Workbook is None:
         print("openpyxl not installed — skipping .xlsx report", file=sys.stderr)
         return
 
     wb = Workbook()
+    sorted_results = sorted(results, key=lambda x: x["nodeid"])
 
-    # Executed Tests sheet
+    # ── Sheet 1: Executed Tests ──────────────────────────────────────────────
     ws = wb.active
     ws.title = "Executed Tests"
-    headers = ["Test Case ID", "Module", "Status", "Duration (s)", "Failure Reason"]
-    ws.append(headers)
-    for cell in ws[1]:
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = PatternFill("solid", fgColor="2D4A3E")
-        cell.alignment = Alignment(horizontal="center")
-    for i, r in enumerate(sorted(results, key=lambda x: x["nodeid"]), start=1):
-        ws.append([
-            f"TC-{i:04d}",
-            r["module"],
-            r["status"].upper(),
-            r["duration_s"],
-            (r.get("longrepr") or "")[:500],
-        ])
-    for col, width in zip("ABCDE", [12, 40, 12, 14, 60]):
-        ws.column_dimensions[col].width = width
+    _make_header(ws, ["#", "Test ID", "Module", "Markers", "Status", "Duration (s)"], _HDR_EXECUTED)
 
-    # Summary sheets
-    for name, statuses in [("Passed", ["passed"]), ("Failed", ["failed"]), ("Skipped", ["skipped"])]:
-        sheet = wb.create_sheet(name)
-        sheet.append(["Test", "Duration (s)"])
-        for r in results:
-            if r["status"] in statuses:
-                sheet.append([r["nodeid"], r["duration_s"]])
+    for seq, r in enumerate(sorted_results, start=1):
+        status_upper = r["status"].upper()
+        module_label = _module_label(r["module"])
+        markers      = r.get("markers") or ""
+        ws.append([seq, _test_id(r["nodeid"]), module_label, markers,
+                   status_upper, r["duration_s"]])
+        row_idx = ws.max_row
+        # colour the Status cell
+        cell_color = _STATUS_CELL_COLORS.get(status_upper)
+        if cell_color:
+            ws.cell(row=row_idx, column=5).fill = PatternFill(
+                "solid", fgColor=cell_color
+            )
+        for col in range(1, 7):
+            ws.cell(row=row_idx, column=col).alignment = Alignment(
+                vertical="center", wrap_text=False
+            )
 
-    # Execution Metrics
+    for col_letter, width in zip("ABCDEF", [7, 50, 39, 11, 11, 16]):
+        ws.column_dimensions[col_letter].width = width
+
+    # ── Sheets 2-4: Passed / Failed / Skipped ───────────────────────────────
+    sheet_defs = [
+        ("Passed",  "passed",  _HDR_PASSED),
+        ("Failed",  "failed",  _HDR_FAILED),
+        ("Skipped", "skipped", _HDR_SKIPPED),
+    ]
+    for sheet_name, status_key, hdr_color in sheet_defs:
+        sh = wb.create_sheet(sheet_name)
+        _make_header(sh, ["#", "Test ID", "Module", "Duration (s)"], hdr_color)
+        seq = 0
+        for r in sorted_results:
+            if r["status"] == status_key:
+                seq += 1
+                sh.append([seq, _test_id(r["nodeid"]),
+                            _module_label(r["module"]), r["duration_s"]])
+                for col in range(1, 5):
+                    sh.cell(row=sh.max_row, column=col).alignment = Alignment(
+                        vertical="center"
+                    )
+        for col_letter, width in zip("ABCD", [7, 50, 39, 16]):
+            sh.column_dimensions[col_letter].width = width
+
+    # ── Sheet 5: Execution Metrics ───────────────────────────────────────────
     metrics = wb.create_sheet("Execution Metrics")
-    metrics.append(["Metric", "Value"])
-    metrics.append(["Total executed", summary["passed"] + summary["failed"]])
-    metrics.append(["Passed", summary["passed"]])
-    metrics.append(["Failed", summary["failed"]])
-    metrics.append(["Skipped", summary["skipped"]])
-    metrics.append(["Pass rate (%)", summary["pass_rate"]])
-    metrics.append(["Threshold (%)", config.PASS_RATE_THRESHOLD])
-    metrics.append(["Target URL", config.BASE_URL])
+    bold = Font(bold=True)
+    metrics.cell(row=1, column=1, value="Metric").font = bold
+    metrics.cell(row=1, column=2, value="Value").font  = bold
+    metrics_rows = [
+        ("Run At",           run_at or datetime.now(timezone.utc).isoformat()),
+        ("Base URL",         config.BASE_URL),
+        ("Total Tests",      summary["total"]),
+        ("Passed",           summary["passed"]),
+        ("Failed",           summary["failed"]),
+        ("Skipped",          summary["skipped"]),
+        ("Pass Rate (%)",    summary["pass_rate"]),
+        ("Total Duration (s)", summary["total_duration_s"]),
+    ]
+    for metric, value in metrics_rows:
+        metrics.append([metric, value])
     metrics.column_dimensions["A"].width = 22
-    metrics.column_dimensions["B"].width = 50
+    metrics.column_dimensions["B"].width = 49
 
-    # Defect Summary (failures only, grouped by module)
+    # ── Sheet 6: Defect Summary ──────────────────────────────────────────────
     defects = wb.create_sheet("Defect Summary")
-    defects.append(["Module", "Failed Count", "Example Failure"])
-    by_mod_fail = {}
-    for r in results:
+    _make_header(defects, ["#", "Defect / Test ID", "Module", "Severity"], _HDR_FAILED)
+    seq = 0
+    for r in sorted_results:
         if r["status"] == "failed":
-            by_mod_fail.setdefault(r["module"], []).append(r)
-    for mod, fails in sorted(by_mod_fail.items()):
-        defects.append([mod, len(fails), (fails[0].get("longrepr") or "")[:300]])
-    defects.column_dimensions["A"].width = 40
-    defects.column_dimensions["C"].width = 60
+            seq += 1
+            defects.append([seq, _test_id(r["nodeid"]),
+                             _module_label(r["module"]), "LOW"])
+            for col in range(1, 5):
+                defects.cell(row=defects.max_row, column=col).alignment = Alignment(
+                    vertical="center"
+                )
+    defects.column_dimensions["A"].width = 6
+    defects.column_dimensions["B"].width = 50
+    defects.column_dimensions["C"].width = 39
+    defects.column_dimensions["D"].width = 12
 
     wb.save(out_path)
+    print(f"Wrote {out_path}")
 
 
 def main():
@@ -258,14 +350,17 @@ def main():
         print("WARNING: no result files found under "
               f"{config.RESULTS_DIR} — did pytest run?", file=sys.stderr)
 
+    run_at = datetime.now(timezone.utc).isoformat()
     summary = summarize(results)
     print(f"Merged {len(files)} worker file(s): {workers}")
     print(f"Total={summary['total']} Passed={summary['passed']} "
           f"Failed={summary['failed']} Skipped={summary['skipped']} "
-          f"PassRate={summary['pass_rate']}%")
+          f"PassRate={summary['pass_rate']}% Duration={summary['total_duration_s']}s")
 
     write_execution_results_json(
-        results, summary, os.path.join(config.REPORTS_DIR, "execution-results.json")
+        results, summary,
+        os.path.join(config.REPORTS_DIR, "execution-results.json"),
+        run_at=run_at,
     )
     write_summary_md(summary, os.path.join(config.REPORTS_DIR, "summary.md"))
     write_execution_report_html(
@@ -275,6 +370,7 @@ def main():
     write_xlsx(
         results, summary,
         os.path.join(config.REPORTS_DIR, "Automation_Test_Report.xlsx"),
+        run_at=run_at,
     )
 
     print("Reports written to", config.REPORTS_DIR)

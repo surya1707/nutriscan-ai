@@ -29,6 +29,7 @@ import json
 import re
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 try:
@@ -43,6 +44,13 @@ TESTS_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = TESTS_DIR.parent
 OUTPUT_DIR = TESTS_DIR / "reporting" / "output"
 JSON_REPORT_PATH = Path("/tmp/pytest-report.json")
+
+# ── Execution-report colour palette (matches Report-demo.xlsx) ───────────────
+_HDR_EXECUTED = "1A5276"   # navy
+_HDR_PASSED   = "1E8449"   # green
+_HDR_FAILED   = "C0392B"   # red
+_HDR_SKIPPED  = "B7950B"   # amber
+_STATUS_CELL  = {"passed": "D5F5E3", "failed": "FADBD8", "skipped": "FEF9E7"}
 
 FIELD_PATTERN = re.compile(
     r"^\s*(CATEGORY|TITLE|OBJECTIVE|EXPECTED|IMPACT|REMEDIATION|SEVERITY|ACTUAL)\s*:\s*(.*)$"
@@ -301,11 +309,191 @@ def write_findings(cases: list[TestCase], out_path: Path) -> None:
     print(f"Wrote {out_path} ({len(findings)} findings)")
 
 
+# ── Execution-report helpers ─────────────────────────────────────────────────
+
+def _make_exec_header(ws, columns: list[str], fill_color: str) -> None:
+    """Write a bold white-on-colour header row and freeze pane at A2."""
+    fill  = PatternFill("solid", fgColor=fill_color)
+    font  = Font(bold=True, color="FFFFFF")
+    align = Alignment(horizontal="center", vertical="center")
+    for idx, col_name in enumerate(columns, start=1):
+        cell = ws.cell(row=1, column=idx, value=col_name)
+        cell.fill  = fill
+        cell.font  = font
+        cell.alignment = align
+    ws.freeze_panes = "A2"
+
+
+def _test_id_from_nodeid(nodeid: str) -> str:
+    """Return just the test function name from a full pytest nodeid."""
+    return re.sub(r"\[.*\]$", "", nodeid).split("::")[-1]
+
+
+def _module_label_from_path(module_path: str) -> str:
+    """Convert a file-path module string to a human-readable category label.
+
+    e.g. 'functional/test_scan_functional.py' → 'Scan Functional'
+    """
+    stem = Path(module_path).stem          # test_scan_functional
+    if stem.startswith("test_"):
+        stem = stem[5:]                    # scan_functional
+    return stem.replace("_", " ").title()  # Scan Functional
+
+
+def write_execution_xlsx(out_path: Path) -> None:
+    """Produce Automation_Test_Report.xlsx in the same 6-sheet format as
+    Report-demo.xlsx, populated from the pytest JSON report if available.
+
+    Sheets
+    ------
+    1. Executed Tests  – every test with #, Test ID, Module, Markers, Status,
+                         Duration (s); Status cell is colour-coded.
+    2. Passed          – #, Test ID, Module, Duration (s)
+    3. Failed          – #, Test ID, Module, Duration (s)
+    4. Skipped         – #, Test ID, Module, Duration (s)
+    5. Execution Metrics – Run At / Base URL / counts / pass rate / duration
+    6. Defect Summary  – one row per failed test with Severity = LOW
+    """
+    # ── Load pytest JSON report ──────────────────────────────────────────────
+    tests: list[dict] = []
+    run_at = datetime.now(timezone.utc).isoformat()
+    if JSON_REPORT_PATH.exists():
+        data = json.loads(JSON_REPORT_PATH.read_text())
+        run_at = data.get("created", run_at)
+        for t in data.get("tests", []):
+            # Keep one entry per parametrized variant (matches demo behaviour).
+            tests.append({
+                "nodeid":     t["nodeid"],
+                "status":     t.get("outcome", "unknown"),
+                "duration_s": round(t.get("duration", 0.0), 3),
+                "module":     t["nodeid"].split("::")[0],
+                "markers":    "",   # pytest-json-report doesn't surface markers
+            })
+    else:
+        print(
+            f"[info] no pytest-json-report at {JSON_REPORT_PATH}; "
+            "producing an empty execution report.",
+            file=sys.stderr,
+        )
+
+    sorted_tests = sorted(tests, key=lambda t: t["nodeid"])
+    passed  = [t for t in sorted_tests if t["status"] == "passed"]
+    failed  = [t for t in sorted_tests if t["status"] == "failed"]
+    skipped = [t for t in sorted_tests if t["status"] == "skipped"]
+    executed = len(passed) + len(failed)
+    pass_rate = round(len(passed) / executed * 100, 2) if executed else 0.0
+    total_duration = round(sum(t["duration_s"] for t in sorted_tests), 3)
+
+    wb = Workbook()
+
+    # ── Sheet 1: Executed Tests ──────────────────────────────────────────────
+    ws = wb.active
+    ws.title = "Executed Tests"
+    _make_exec_header(
+        ws, ["#", "Test ID", "Module", "Markers", "Status", "Duration (s)"],
+        _HDR_EXECUTED,
+    )
+    for seq, t in enumerate(sorted_tests, start=1):
+        status_upper = t["status"].upper()
+        ws.append([
+            seq,
+            _test_id_from_nodeid(t["nodeid"]),
+            _module_label_from_path(t["module"]),
+            t.get("markers") or "",
+            status_upper,
+            t["duration_s"],
+        ])
+        row_idx = ws.max_row
+        cell_color = _STATUS_CELL.get(t["status"])
+        if cell_color:
+            ws.cell(row=row_idx, column=5).fill = PatternFill(
+                "solid", fgColor=cell_color
+            )
+        for col in range(1, 7):
+            ws.cell(row=row_idx, column=col).alignment = Alignment(
+                vertical="center", wrap_text=False
+            )
+    for col_letter, width in zip("ABCDEF", [7, 50, 39, 11, 11, 16]):
+        ws.column_dimensions[col_letter].width = width
+
+    # ── Sheets 2-4: Passed / Failed / Skipped ───────────────────────────────
+    sheet_defs = [
+        ("Passed",  passed,  _HDR_PASSED),
+        ("Failed",  failed,  _HDR_FAILED),
+        ("Skipped", skipped, _HDR_SKIPPED),
+    ]
+    for sheet_name, subset, hdr_color in sheet_defs:
+        sh = wb.create_sheet(sheet_name)
+        _make_exec_header(sh, ["#", "Test ID", "Module", "Duration (s)"], hdr_color)
+        for seq, t in enumerate(subset, start=1):
+            sh.append([
+                seq,
+                _test_id_from_nodeid(t["nodeid"]),
+                _module_label_from_path(t["module"]),
+                t["duration_s"],
+            ])
+            for col in range(1, 5):
+                sh.cell(row=sh.max_row, column=col).alignment = Alignment(
+                    vertical="center"
+                )
+        for col_letter, width in zip("ABCD", [7, 50, 39, 16]):
+            sh.column_dimensions[col_letter].width = width
+
+    # ── Sheet 5: Execution Metrics ───────────────────────────────────────────
+    metrics = wb.create_sheet("Execution Metrics")
+    bold_font = Font(bold=True)
+    metrics.cell(row=1, column=1, value="Metric").font = bold_font
+    metrics.cell(row=1, column=2, value="Value").font  = bold_font
+    for metric, value in [
+        ("Run At",             run_at),
+        ("Base URL",           "(backend API tests — no browser URL)"),
+        ("Total Tests",        len(sorted_tests)),
+        ("Passed",             len(passed)),
+        ("Failed",             len(failed)),
+        ("Skipped",            len(skipped)),
+        ("Pass Rate (%)",      pass_rate),
+        ("Total Duration (s)", total_duration),
+    ]:
+        metrics.append([metric, value])
+    metrics.column_dimensions["A"].width = 22
+    metrics.column_dimensions["B"].width = 49
+
+    # ── Sheet 6: Defect Summary ──────────────────────────────────────────────
+    defects = wb.create_sheet("Defect Summary")
+    _make_exec_header(
+        defects, ["#", "Defect / Test ID", "Module", "Severity"], _HDR_FAILED
+    )
+    for seq, t in enumerate(failed, start=1):
+        defects.append([
+            seq,
+            _test_id_from_nodeid(t["nodeid"]),
+            _module_label_from_path(t["module"]),
+            "LOW",
+        ])
+        for col in range(1, 5):
+            defects.cell(row=defects.max_row, column=col).alignment = Alignment(
+                vertical="center"
+            )
+    defects.column_dimensions["A"].width = 6
+    defects.column_dimensions["B"].width = 50
+    defects.column_dimensions["C"].width = 39
+    defects.column_dimensions["D"].width = 12
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    wb.save(out_path)
+    print(
+        f"Wrote {out_path} "
+        f"({len(sorted_tests)} tests · {len(passed)} passed · "
+        f"{len(failed)} failed · {len(skipped)} skipped)"
+    )
+
+
 def main():
     cases = collect_all_test_cases()
     collected_total, ran_total = attach_results(cases)
     write_catalog(cases, OUTPUT_DIR / "test-case-catalog.xlsx", authoritative_total=collected_total)
     write_findings(cases, OUTPUT_DIR / "findings.xlsx")
+    write_execution_xlsx(OUTPUT_DIR / "Automation_Test_Report.xlsx")
 
 
 if __name__ == "__main__":
