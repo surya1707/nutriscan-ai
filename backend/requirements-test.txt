@@ -1,0 +1,16 @@
+# Install alongside the existing requirements-dev.txt:
+#   pip install -r requirements-dev.txt -r requirements-test.txt --break-system-packages
+#
+# (kept separate from requirements-dev.txt deliberately -- these are only
+# needed for the expanded functional/security/report/CI pipeline, not for a
+# quick local `pytest` run against the original 13 tests.)
+#
+# Versions below are pinned to what was actually installed and verified
+# working in this handover's sandbox, not guessed.
+
+pytest-cov==7.1.0          # coverage measurement (see pyproject.toml [tool.coverage.run] -- greenlet+thread tracing)
+pytest-json-report==1.5.0  # machine-readable test results consumed by tests/reporting/generate_reports.py
+openpyxl==3.1.5            # writes the .xlsx test-case catalog / findings workbook
+bandit==1.9.4              # SAST: static analysis for common Python security issues
+pip-audit==2.10.1          # SCA: checks installed dependencies against known CVEs
+pyjwt==2.13.0              # used only by tests/security/test_authentication.py to forge JWTs for negative tests
