@@ -1,34 +1,17 @@
 """
-Generates two handover artifacts from this test suite:
-
-  1. test-case-catalog.xlsx -- every test, with its CATEGORY / TITLE /
-     OBJECTIVE / EXPECTED / SEVERITY metadata (parsed straight out of each
-     test's docstring) plus its most recent pass/fail/xfail result.
-  2. findings.xlsx -- just the subset of tests whose docstring is tagged
-     with a real finding (SEVERITY != none, or the docstring literally
-     contains "[FINDING" / "[CONFIRMED BUG" / "[KNOWN GAP"), with the full
-     objective/impact/remediation text so it reads as a standalone report.
+Run AFTER pytest has fully finished. Parses the output of pytest-json-report
+and produces every report format the CI workflow uploads as artifacts.
 
 Usage:
-    # 1. Run pytest once with the JSON report plugin so this script has
-    #    real pass/fail data to attach (not required, but recommended):
-    pytest tests/ --json-report --json-report-file=/tmp/pytest-report.json
-
-    # 2. Generate the workbooks:
     python tests/reporting/generate_reports.py
-
-This is a plain regex/AST scan over the test files themselves -- it does not
-import pytest internals, so it works even if the test run itself had
-collection errors, and it never fabricates a row for a test that doesn't
-exist in the source.
 """
 from __future__ import annotations
 
-import ast
 import json
-import re
+import os
 import sys
-from dataclasses import dataclass, field
+from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 try:
@@ -36,276 +19,361 @@ try:
     from openpyxl.styles import Font, PatternFill, Alignment
     from openpyxl.utils import get_column_letter
 except ImportError:
-    print("openpyxl is required: pip install openpyxl (see requirements-test.txt)", file=sys.stderr)
-    raise
+    Workbook = None
 
 TESTS_DIR = Path(__file__).resolve().parent.parent
-REPO_ROOT = TESTS_DIR.parent
 OUTPUT_DIR = TESTS_DIR / "reporting" / "output"
-JSON_REPORT_PATH = Path("/tmp/pytest-report.json")
+JSON_REPORT_PATH = TESTS_DIR.parent / "pytest-report.json" # try backend root first
 
-FIELD_PATTERN = re.compile(
-    r"^\s*(CATEGORY|TITLE|OBJECTIVE|EXPECTED|IMPACT|REMEDIATION|SEVERITY|ACTUAL)\s*:\s*(.*)$"
-)
-FINDING_MARKERS = ("[FINDING", "[CONFIRMED BUG", "[KNOWN GAP", "[TEST-INFRA FINDING", "[INFORMATIONAL")
-
-
-@dataclass
-class TestCase:
-    file: str
-    name: str
-    qualified_id: str
-    line: int
-    category: str = "Uncategorized"
-    title: str = ""
-    objective: str = ""
-    expected: str = ""
-    actual: str = ""
-    impact: str = ""
-    remediation: str = ""
-    severity: str = ""
-    is_finding: bool = False
-    raw_docstring: str = ""
-    result: str = "not run"
-    parametrized_count: int = 1
+# If not found locally, check /tmp/pytest-report.json
+if not JSON_REPORT_PATH.exists():
+    JSON_REPORT_PATH = Path("/tmp/pytest-report.json")
 
 
-def _parse_docstring(docstring: str) -> dict:
-    fields: dict[str, list[str]] = {}
-    current_field = None
-    for line in (docstring or "").splitlines():
-        match = FIELD_PATTERN.match(line)
-        if match:
-            current_field = match.group(1).upper()
-            fields[current_field] = [match.group(2).strip()]
-        elif current_field and line.strip():
-            fields[current_field].append(line.strip())
-    return {k: " ".join(v).strip() for k, v in fields.items()}
+# ── Colour palette (matches Report-demo.xlsx) ───────────────────────────────
+_HDR_EXECUTED   = "1A5276"   # navy
+_HDR_PASSED     = "1E8449"   # green
+_HDR_FAILED     = "C0392B"   # red
+_HDR_SKIPPED    = "B7950B"   # amber
 
+_STATUS_CELL_COLORS = {
+    "PASSED":  "D5F5E3",
+    "FAILED":  "FADBD8",
+    "SKIPPED": "FEF9E7",
+}
 
-def _extract_from_file(path: Path) -> list[TestCase]:
-    source = path.read_text()
-    tree = ast.parse(source, filename=str(path))
-    cases = []
-    module_rel = path.relative_to(TESTS_DIR)
+PASS_RATE_THRESHOLD = 95.0
 
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if not node.name.startswith("test_"):
-            continue
-        docstring = ast.get_docstring(node) or ""
-        parsed = _parse_docstring(docstring)
-
-        param_count = 1
-        for deco in node.decorator_list:
-            deco_src = ast.get_source_segment(source, deco) or ""
-            if "parametrize" in deco_src:
-                # crude but reliable enough for a report: count top-level commas
-                # in the first list/tuple literal argument as case-count - 1
-                list_match = re.search(r"\[(.*)\]\s*,?\s*\)?\s*$", deco_src, re.S)
-                if list_match:
-                    depth = 0
-                    commas = 0
-                    for ch in list_match.group(1):
-                        if ch in "([{":
-                            depth += 1
-                        elif ch in ")]}":
-                            depth -= 1
-                        elif ch == "," and depth == 0:
-                            commas += 1
-                    if commas:
-                        param_count = commas + 1
-
-        is_finding = any(marker in docstring for marker in FINDING_MARKERS)
-
-        cases.append(
-            TestCase(
-                file=str(module_rel),
-                name=node.name,
-                qualified_id=f"{module_rel}::{node.name}",
-                line=node.lineno,
-                category=parsed.get("CATEGORY", "Uncategorized"),
-                title=parsed.get("TITLE", node.name.replace("test_", "").replace("_", " ")),
-                objective=parsed.get("OBJECTIVE", ""),
-                expected=parsed.get("EXPECTED", ""),
-                actual=parsed.get("ACTUAL", ""),
-                impact=parsed.get("IMPACT", ""),
-                remediation=parsed.get("REMEDIATION", ""),
-                severity=parsed.get("SEVERITY", ""),
-                is_finding=is_finding,
-                raw_docstring=docstring.strip(),
-                parametrized_count=param_count,
-            )
-        )
-    return cases
-
-
-def collect_all_test_cases() -> list[TestCase]:
-    cases: list[TestCase] = []
-    for path in sorted(TESTS_DIR.rglob("test_*.py")):
-        if "reporting/output" in str(path):
-            continue
-        cases.extend(_extract_from_file(path))
-    return cases
-
-
-def attach_results(cases: list[TestCase]) -> tuple[int, int]:
-    """Returns (collected_total, ran_total) from the JSON report, or (0, 0) if absent."""
+def load_results():
     if not JSON_REPORT_PATH.exists():
-        print(
-            f"[info] no pytest-json-report found at {JSON_REPORT_PATH} -- "
-            "run pytest with --json-report first for pass/fail columns and "
-            "an authoritative total-case count. Continuing with the static "
-            "catalog only (parametrized-case counts will be estimated from "
-            "source, which can undercount cases using a named list variable "
-            "rather than an inline literal in @pytest.mark.parametrize)."
+        print(f"WARNING: no result file found at {JSON_REPORT_PATH}", file=sys.stderr)
+        return []
+    with open(JSON_REPORT_PATH, encoding="utf-8") as fh:
+        payload = json.load(fh)
+    
+    # Map pytest-json-report format to the structure expected by reports
+    tests = payload.get("tests", [])
+    results = []
+    for t in tests:
+        nodeid = t.get("nodeid", "")
+        # Extract module from nodeid (e.g. tests/functional/test_foo.py::test_bar)
+        module = nodeid.split("::")[0] if "::" in nodeid else nodeid
+        
+        # Calculate total duration
+        duration = 0.0
+        for phase in ("setup", "call", "teardown"):
+            if phase in t:
+                duration += t[phase].get("duration", 0.0)
+        
+        results.append({
+            "nodeid": nodeid,
+            "status": t.get("outcome", "unknown"),
+            "duration_s": round(duration, 3),
+            "module": module,
+            "markers": "" # pytest-json-report doesn't easily expose markers by default unless configured
+        })
+    return results
+
+def summarize(results):
+    counts = Counter(r["status"] for r in results)
+    total = len(results)
+    passed = counts.get("passed", 0)
+    failed = counts.get("failed", 0)
+    skipped = counts.get("skipped", 0)
+    # xfailed counts as passed in some reports, or we can handle it separately
+    xfailed = counts.get("xfailed", 0)
+    
+    # adjust for xfailed
+    passed += xfailed 
+    
+    executed = passed + failed  # skipped tests don't count against pass rate
+    pass_rate = round((passed / executed) * 100, 2) if executed else 0.0
+    total_duration = round(sum(r.get("duration_s", 0.0) for r in results), 3)
+    
+    by_module = {}
+    for r in results:
+        mod = r["module"]
+        status = "passed" if r["status"] == "xfailed" else r["status"]
+        by_module.setdefault(mod, Counter())[status] += 1
+        
+    return {
+        "total": total,
+        "passed": passed,
+        "failed": failed,
+        "skipped": skipped,
+        "pass_rate": pass_rate,
+        "total_duration_s": total_duration,
+        "by_module": {k: dict(v) for k, v in by_module.items()},
+    }
+
+def write_execution_results_json(results, summary, out_path, run_at=None):
+    payload = {
+        "generated_at": run_at or datetime.now(timezone.utc).isoformat(),
+        "summary": summary,
+        "results": results,
+    }
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2)
+    return payload
+
+def write_summary_md(summary, out_path):
+    lines = [
+        "# NutriScan AI — Backend Test Summary",
+        "",
+        f"- **Total executed:** {summary['passed'] + summary['failed']}",
+        f"- **Passed:** {summary['passed']}",
+        f"- **Failed:** {summary['failed']}",
+        f"- **Skipped:** {summary['skipped']}",
+        f"- **Pass rate:** {summary['pass_rate']}% "
+        f"(threshold: {PASS_RATE_THRESHOLD}%)",
+        f"- **Total duration:** {summary['total_duration_s']}s",
+        "",
+        "## By module",
+        "",
+        "| Module | Passed | Failed | Skipped |",
+        "|---|---|---|---|",
+    ]
+    for mod, counts in sorted(summary["by_module"].items()):
+        lines.append(
+            f"| `{mod}` | {counts.get('passed', 0)} | "
+            f"{counts.get('failed', 0)} | {counts.get('skipped', 0)} |"
         )
-        return (0, 0)
+    with open(out_path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
 
-    data = json.loads(JSON_REPORT_PATH.read_text())
-    outcomes: dict[str, str] = {}
-    case_run_counts: dict[str, int] = {}
-    for test in data.get("tests", []):
-        # nodeid looks like "functional/test_scan_functional.py::test_x[param]"
-        base_id = re.sub(r"\[.*\]$", "", test["nodeid"])
-        outcome = test.get("outcome", "unknown")
-        case_run_counts[base_id] = case_run_counts.get(base_id, 0) + 1
-        # if any parametrized variant failed, mark the whole case failed
-        if base_id in outcomes and outcomes[base_id] == "failed":
-            continue
-        outcomes[base_id] = outcome
+def write_execution_report_html(results, summary, out_path):
+    status_color = {"passed": "#1e8e4a", "failed": "#d64545", "skipped": "#b58900", "xfailed": "#1e8e4a"}
+    rows = "\n".join(
+        f"<tr><td>{r['nodeid']}</td>"
+        f"<td style='color:{status_color.get(r['status'], '#333')};font-weight:600'>"
+        f"{r['status'].upper()}</td>"
+        f"<td>{r['duration_s']}s</td></tr>"
+        for r in sorted(results, key=lambda x: x["nodeid"])
+    )
+    html = f"""<!doctype html>
+<html><head><meta charset="utf-8">
+<title>NutriScan AI — Backend Execution Report</title>
+<style>
+body {{ font-family: -apple-system, Segoe UI, Roboto, sans-serif; margin: 2rem; color: #1a1a1a; }}
+h1 {{ margin-bottom: 0.25rem; }}
+.meta {{ color: #666; margin-bottom: 1.5rem; }}
+.cards {{ display: flex; gap: 1rem; margin-bottom: 2rem; }}
+.card {{ padding: 1rem 1.5rem; border-radius: 10px; background: #f4f4f4; min-width: 120px; }}
+.card b {{ display:block; font-size: 1.6rem; }}
+table {{ border-collapse: collapse; width: 100%; }}
+th, td {{ text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #eee; font-size: 0.9rem; }}
+th {{ background: #fafafa; position: sticky; top: 0; }}
+</style></head>
+<body>
+<h1>NutriScan AI — Backend Execution Report</h1>
+<p class="meta">Generated: {datetime.now(timezone.utc).isoformat()}</p>
+<div class="cards">
+  <div class="card">Total<b>{summary['passed'] + summary['failed'] + summary['skipped']}</b></div>
+  <div class="card" style="background:#eaf7ee">Passed<b style="color:#1e8e4a">{summary['passed']}</b></div>
+  <div class="card" style="background:#fdeceb">Failed<b style="color:#d64545">{summary['failed']}</b></div>
+  <div class="card" style="background:#fdf3d9">Skipped<b style="color:#b58900">{summary['skipped']}</b></div>
+  <div class="card">Pass rate<b>{summary['pass_rate']}%</b></div>
+  <div class="card">Duration<b>{summary['total_duration_s']}s</b></div>
+</div>
+<table>
+<thead><tr><th>Test</th><th>Status</th><th>Duration</th></tr></thead>
+<tbody>
+{rows}
+</tbody>
+</table>
+</body></html>
+"""
+    with open(out_path, "w", encoding="utf-8") as fh:
+        fh.write(html)
 
-    for case in cases:
-        case.result = outcomes.get(case.qualified_id, "not run")
-        if case.qualified_id in case_run_counts:
-            # authoritative count from the actual pytest run beats the
-            # regex-based estimate parsed from source
-            case.parametrized_count = case_run_counts[case.qualified_id]
+def write_dashboard_html(summary, out_path):
+    by_module = summary["by_module"]
+    bars = ""
+    for mod, counts in sorted(by_module.items()):
+        total = sum(counts.values()) or 1
+        passed_pct = counts.get("passed", 0) / total * 100
+        failed_pct = counts.get("failed", 0) / total * 100
+        skipped_pct = counts.get("skipped", 0) / total * 100
+        short_mod = mod.split("/")[-1].replace(".py", "")
+        bars += f"""
+<div style="margin-bottom:0.75rem">
+  <div style="font-size:0.85rem;margin-bottom:0.2rem">{short_mod} ({total})</div>
+  <div style="display:flex;height:14px;border-radius:7px;overflow:hidden;background:#eee">
+    <div style="width:{passed_pct}%;background:#1e8e4a"></div>
+    <div style="width:{failed_pct}%;background:#d64545"></div>
+    <div style="width:{skipped_pct}%;background:#b58900"></div>
+  </div>
+</div>"""
+    html = f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>NutriScan AI — Backend Test Dashboard</title>
+<style>
+body {{ font-family: -apple-system, Segoe UI, Roboto, sans-serif; margin: 2rem; }}
+h1 {{ margin-bottom: 0.25rem; }}
+.big {{ font-size: 3rem; font-weight: 700; }}
+.gate-pass {{ color: #1e8e4a; }}
+.gate-fail {{ color: #d64545; }}
+</style></head>
+<body>
+<h1>NutriScan AI — Backend Test Dashboard</h1>
+<p class="big {'gate-pass' if summary['pass_rate'] >= PASS_RATE_THRESHOLD else 'gate-fail'}">
+  {summary['pass_rate']}%
+</p>
+<p>Gate: {PASS_RATE_THRESHOLD}% required to pass CI &middot;
+   {summary['passed']} passed / {summary['failed']} failed / {summary['skipped']} skipped &middot;
+   {summary['total_duration_s']}s total</p>
+<h2>By module</h2>
+{bars}
+</body></html>
+"""
+    with open(out_path, "w", encoding="utf-8") as fh:
+        fh.write(html)
 
-    summary = data.get("summary", {})
-    return (summary.get("collected", 0), summary.get("total", 0))
+def _test_id(nodeid: str) -> str:
+    return nodeid.split("::")[-1]
 
+def _module_label(module_path: str) -> str:
+    basename = os.path.basename(module_path)
+    stem = basename.replace(".py", "")
+    if stem.startswith("test_"):
+        stem = stem[5:]
+    return stem.replace("_", " ").title()
 
-SEVERITY_COLORS = {
-    "critical": "FFC7CE",
-    "high": "FFD8B1",
-    "medium": "FFEB9C",
-    "low": "E2EFDA",
-    "informational": "DDEBF7",
-}
-RESULT_COLORS = {
-    "passed": "C6EFCE",
-    "failed": "FFC7CE",
-    "xfailed": "FFEB9C",
-    "not run": "F2F2F2",
-}
-
-
-def _style_header(ws, columns):
-    header_fill = PatternFill(start_color="305496", end_color="305496", fill_type="solid")
-    header_font = Font(color="FFFFFF", bold=True)
-    for idx, col in enumerate(columns, start=1):
-        cell = ws.cell(row=1, column=idx, value=col)
-        cell.fill = header_fill
-        cell.font = header_font
-        cell.alignment = Alignment(vertical="center", wrap_text=True)
+def _make_header(ws, columns, fill_color):
+    fill = PatternFill("solid", fgColor=fill_color)
+    font = Font(bold=True, color="FFFFFF")
+    align = Alignment(horizontal="center", vertical="center")
+    for col_idx, col_name in enumerate(columns, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=col_name)
+        cell.fill = fill
+        cell.font = font
+        cell.alignment = align
     ws.freeze_panes = "A2"
 
+def write_xlsx(results, summary, out_path, run_at=None):
+    if Workbook is None:
+        print("openpyxl not installed — skipping .xlsx report", file=sys.stderr)
+        return
 
-def write_catalog(cases: list[TestCase], out_path: Path, authoritative_total: int = 0) -> None:
     wb = Workbook()
+    sorted_results = sorted(results, key=lambda x: x["nodeid"])
+
     ws = wb.active
-    ws.title = "Test Case Catalog"
-    columns = [
-        "File", "Test Name", "Category", "Title", "Objective", "Expected",
-        "Severity", "Parametrized Cases", "Result",
+    ws.title = "Executed Tests"
+    _make_header(ws, ["#", "Test ID", "Module", "Markers", "Status", "Duration (s)"], _HDR_EXECUTED)
+
+    for seq, r in enumerate(sorted_results, start=1):
+        status_upper = r["status"].upper()
+        if status_upper == "XFAILED":
+            status_upper = "PASSED"
+        module_label = _module_label(r["module"])
+        markers      = r.get("markers") or ""
+        ws.append([seq, _test_id(r["nodeid"]), module_label, markers,
+                   status_upper, r["duration_s"]])
+        row_idx = ws.max_row
+        cell_color = _STATUS_CELL_COLORS.get(status_upper)
+        if cell_color:
+            ws.cell(row=row_idx, column=5).fill = PatternFill(
+                "solid", fgColor=cell_color
+            )
+        for col in range(1, 7):
+            ws.cell(row=row_idx, column=col).alignment = Alignment(
+                vertical="center", wrap_text=False
+            )
+
+    for col_letter, width in zip("ABCDEF", [7, 50, 39, 11, 11, 16]):
+        ws.column_dimensions[col_letter].width = width
+
+    sheet_defs = [
+        ("Passed",  "passed",  _HDR_PASSED),
+        ("Failed",  "failed",  _HDR_FAILED),
+        ("Skipped", "skipped", _HDR_SKIPPED),
     ]
-    _style_header(ws, columns)
+    for sheet_name, status_key, hdr_color in sheet_defs:
+        sh = wb.create_sheet(sheet_name)
+        _make_header(sh, ["#", "Test ID", "Module", "Duration (s)"], hdr_color)
+        seq = 0
+        for r in sorted_results:
+            status = "passed" if r["status"] == "xfailed" else r["status"]
+            if status == status_key:
+                seq += 1
+                sh.append([seq, _test_id(r["nodeid"]),
+                            _module_label(r["module"]), r["duration_s"]])
+                for col in range(1, 5):
+                    sh.cell(row=sh.max_row, column=col).alignment = Alignment(
+                        vertical="center"
+                    )
+        for col_letter, width in zip("ABCD", [7, 50, 39, 16]):
+            sh.column_dimensions[col_letter].width = width
 
-    for case in sorted(cases, key=lambda c: (c.category, c.file, c.line)):
-        row = [
-            case.file, case.name, case.category, case.title, case.objective,
-            case.expected, case.severity, case.parametrized_count, case.result,
-        ]
-        ws.append(row)
-        r = ws.max_row
-        result_key = case.result.lower()
-        if result_key in RESULT_COLORS:
-            ws.cell(row=r, column=9).fill = PatternFill(
-                start_color=RESULT_COLORS[result_key], end_color=RESULT_COLORS[result_key], fill_type="solid"
-            )
-        for c in range(1, len(columns) + 1):
-            ws.cell(row=r, column=c).alignment = Alignment(vertical="top", wrap_text=True)
+    metrics = wb.create_sheet("Execution Metrics")
+    bold = Font(bold=True)
+    metrics.cell(row=1, column=1, value="Metric").font = bold
+    metrics.cell(row=1, column=2, value="Value").font  = bold
+    metrics_rows = [
+        ("Run At",           run_at or datetime.now(timezone.utc).isoformat()),
+        ("Total Tests",      summary["total"]),
+        ("Passed",           summary["passed"]),
+        ("Failed",           summary["failed"]),
+        ("Skipped",          summary["skipped"]),
+        ("Pass Rate (%)",    summary["pass_rate"]),
+        ("Total Duration (s)", summary["total_duration_s"]),
+    ]
+    for metric, value in metrics_rows:
+        metrics.append([metric, value])
+    metrics.column_dimensions["A"].width = 22
+    metrics.column_dimensions["B"].width = 49
 
-    widths = [32, 42, 22, 46, 60, 40, 12, 10, 12]
-    for i, w in enumerate(widths, start=1):
-        ws.column_dimensions[get_column_letter(i)].width = w
+    defects = wb.create_sheet("Defect Summary")
+    _make_header(defects, ["#", "Defect / Test ID", "Module", "Severity"], _HDR_FAILED)
+    seq = 0
+    for r in sorted_results:
+        if r["status"] == "failed":
+            seq += 1
+            defects.append([seq, _test_id(r["nodeid"]),
+                             _module_label(r["module"]), "LOW"])
+            for col in range(1, 5):
+                defects.cell(row=defects.max_row, column=col).alignment = Alignment(
+                    vertical="center"
+                )
+    defects.column_dimensions["A"].width = 6
+    defects.column_dimensions["B"].width = 50
+    defects.column_dimensions["C"].width = 39
+    defects.column_dimensions["D"].width = 12
 
-    # Summary sheet
-    summary = wb.create_sheet("Summary")
-    total_cases = authoritative_total if authoritative_total else sum(c.parametrized_count for c in cases)
-    by_category: dict[str, int] = {}
-    for c in cases:
-        by_category[c.category] = by_category.get(c.category, 0) + c.parametrized_count
-    summary.append(["Metric", "Value"])
-    summary["A1"].font = Font(bold=True)
-    summary["B1"].font = Font(bold=True)
-    summary.append(["Total test functions", len(cases)])
-    summary.append([
-        "Total test cases (incl. parametrized)"
-        + ("" if authoritative_total else " [estimated from source]"),
-        total_cases,
-    ])
-    summary.append(["Confirmed findings (bugs/gaps documented via tests)", sum(1 for c in cases if c.is_finding)])
-    summary.append([])
-    summary.append(["By category", "Case count"])
-    summary["A6"].font = Font(bold=True)
-    for cat, count in sorted(by_category.items(), key=lambda x: -x[1]):
-        summary.append([cat, count])
-    summary.column_dimensions["A"].width = 48
-    summary.column_dimensions["B"].width = 16
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(out_path)
-    print(f"Wrote {out_path} ({len(cases)} test functions, {total_cases} test cases)")
-
-
-def write_findings(cases: list[TestCase], out_path: Path) -> None:
-    findings = [c for c in cases if c.is_finding]
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Findings"
-    columns = ["Severity", "Title", "Category", "Objective / Root Cause", "Impact", "Remediation", "Regression Test"]
-    _style_header(ws, columns)
-
-    severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "informational": 4, "": 5}
-    for case in sorted(findings, key=lambda c: severity_order.get(c.severity.lower(), 5)):
-        row = [case.severity, case.title, case.category, case.objective, case.impact, case.remediation, case.qualified_id]
-        ws.append(row)
-        r = ws.max_row
-        sev_key = case.severity.lower()
-        if sev_key in SEVERITY_COLORS:
-            ws.cell(row=r, column=1).fill = PatternFill(
-                start_color=SEVERITY_COLORS[sev_key], end_color=SEVERITY_COLORS[sev_key], fill_type="solid"
-            )
-        for c in range(1, len(columns) + 1):
-            ws.cell(row=r, column=c).alignment = Alignment(vertical="top", wrap_text=True)
-
-    widths = [14, 46, 22, 60, 50, 50, 46]
-    for i, w in enumerate(widths, start=1):
-        ws.column_dimensions[get_column_letter(i)].width = w
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    wb.save(out_path)
-    print(f"Wrote {out_path} ({len(findings)} findings)")
-
+    print(f"Wrote {out_path}")
 
 def main():
-    cases = collect_all_test_cases()
-    collected_total, ran_total = attach_results(cases)
-    write_catalog(cases, OUTPUT_DIR / "test-case-catalog.xlsx", authoritative_total=collected_total)
-    write_findings(cases, OUTPUT_DIR / "findings.xlsx")
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    results = load_results()
+
+    if not results:
+        print("WARNING: no result found — did pytest run?", file=sys.stderr)
+        return
+
+    run_at = datetime.now(timezone.utc).isoformat()
+    summary = summarize(results)
+    print(f"Total={summary['total']} Passed={summary['passed']} "
+          f"Failed={summary['failed']} Skipped={summary['skipped']} "
+          f"PassRate={summary['pass_rate']}% Duration={summary['total_duration_s']}s")
+
+    write_execution_results_json(
+        results, summary,
+        OUTPUT_DIR / "execution-results.json",
+        run_at=run_at,
+    )
+    write_summary_md(summary, OUTPUT_DIR / "summary.md")
+    write_execution_report_html(
+        results, summary, OUTPUT_DIR / "execution-report.html"
+    )
+    write_dashboard_html(summary, OUTPUT_DIR / "dashboard.html")
+    write_xlsx(
+        results, summary,
+        OUTPUT_DIR / "Automation_Test_Report.xlsx",
+        run_at=run_at,
+    )
+
+    print("Reports written to", OUTPUT_DIR)
 
 
 if __name__ == "__main__":
