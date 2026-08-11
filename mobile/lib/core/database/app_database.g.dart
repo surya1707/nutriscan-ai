@@ -71,6 +71,12 @@ class $ScanHistoryTableTable extends ScanHistoryTable
       defaultConstraints:
           GeneratedColumn.constraintIsAlways('CHECK ("is_synced" IN (0, 1))'),
       defaultValue: const Constant(false));
+  static const VerificationMeta _imageUrlMeta =
+      const VerificationMeta('imageUrl');
+  @override
+  late final GeneratedColumn<String> imageUrl = GeneratedColumn<String>(
+      'image_url', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         id,
@@ -82,7 +88,8 @@ class $ScanHistoryTableTable extends ScanHistoryTable
         ingredientsJson,
         alternativesJson,
         scannedAt,
-        isSynced
+        isSynced,
+        imageUrl
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -162,6 +169,10 @@ class $ScanHistoryTableTable extends ScanHistoryTable
       context.handle(_isSyncedMeta,
           isSynced.isAcceptableOrUnknown(data['is_synced']!, _isSyncedMeta));
     }
+    if (data.containsKey('image_url')) {
+      context.handle(_imageUrlMeta,
+          imageUrl.isAcceptableOrUnknown(data['image_url']!, _imageUrlMeta));
+    }
     return context;
   }
 
@@ -191,6 +202,8 @@ class $ScanHistoryTableTable extends ScanHistoryTable
           .read(DriftSqlType.dateTime, data['${effectivePrefix}scanned_at'])!,
       isSynced: attachedDatabase.typeMapping
           .read(DriftSqlType.bool, data['${effectivePrefix}is_synced'])!,
+      imageUrl: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}image_url']),
     );
   }
 
@@ -212,6 +225,9 @@ class ScanHistoryTableData extends DataClass
   final String alternativesJson;
   final DateTime scannedAt;
   final bool isSynced;
+
+  /// Firebase Storage download URL for the scanned product image (nullable).
+  final String? imageUrl;
   const ScanHistoryTableData(
       {required this.id,
       required this.productName,
@@ -222,7 +238,8 @@ class ScanHistoryTableData extends DataClass
       required this.ingredientsJson,
       required this.alternativesJson,
       required this.scannedAt,
-      required this.isSynced});
+      required this.isSynced,
+      this.imageUrl});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -236,6 +253,9 @@ class ScanHistoryTableData extends DataClass
     map['alternatives_json'] = Variable<String>(alternativesJson);
     map['scanned_at'] = Variable<DateTime>(scannedAt);
     map['is_synced'] = Variable<bool>(isSynced);
+    if (!nullToAbsent || imageUrl != null) {
+      map['image_url'] = Variable<String>(imageUrl);
+    }
     return map;
   }
 
@@ -251,6 +271,9 @@ class ScanHistoryTableData extends DataClass
       alternativesJson: Value(alternativesJson),
       scannedAt: Value(scannedAt),
       isSynced: Value(isSynced),
+      imageUrl: imageUrl == null && nullToAbsent
+          ? const Value.absent()
+          : Value(imageUrl),
     );
   }
 
@@ -268,6 +291,7 @@ class ScanHistoryTableData extends DataClass
       alternativesJson: serializer.fromJson<String>(json['alternativesJson']),
       scannedAt: serializer.fromJson<DateTime>(json['scannedAt']),
       isSynced: serializer.fromJson<bool>(json['isSynced']),
+      imageUrl: serializer.fromJson<String?>(json['imageUrl']),
     );
   }
   @override
@@ -284,6 +308,7 @@ class ScanHistoryTableData extends DataClass
       'alternativesJson': serializer.toJson<String>(alternativesJson),
       'scannedAt': serializer.toJson<DateTime>(scannedAt),
       'isSynced': serializer.toJson<bool>(isSynced),
+      'imageUrl': serializer.toJson<String?>(imageUrl),
     };
   }
 
@@ -297,7 +322,8 @@ class ScanHistoryTableData extends DataClass
           String? ingredientsJson,
           String? alternativesJson,
           DateTime? scannedAt,
-          bool? isSynced}) =>
+          bool? isSynced,
+          Value<String?> imageUrl = const Value.absent()}) =>
       ScanHistoryTableData(
         id: id ?? this.id,
         productName: productName ?? this.productName,
@@ -309,6 +335,7 @@ class ScanHistoryTableData extends DataClass
         alternativesJson: alternativesJson ?? this.alternativesJson,
         scannedAt: scannedAt ?? this.scannedAt,
         isSynced: isSynced ?? this.isSynced,
+        imageUrl: imageUrl.present ? imageUrl.value : this.imageUrl,
       );
   ScanHistoryTableData copyWithCompanion(ScanHistoryTableCompanion data) {
     return ScanHistoryTableData(
@@ -330,6 +357,7 @@ class ScanHistoryTableData extends DataClass
           : this.alternativesJson,
       scannedAt: data.scannedAt.present ? data.scannedAt.value : this.scannedAt,
       isSynced: data.isSynced.present ? data.isSynced.value : this.isSynced,
+      imageUrl: data.imageUrl.present ? data.imageUrl.value : this.imageUrl,
     );
   }
 
@@ -345,7 +373,8 @@ class ScanHistoryTableData extends DataClass
           ..write('ingredientsJson: $ingredientsJson, ')
           ..write('alternativesJson: $alternativesJson, ')
           ..write('scannedAt: $scannedAt, ')
-          ..write('isSynced: $isSynced')
+          ..write('isSynced: $isSynced, ')
+          ..write('imageUrl: $imageUrl')
           ..write(')'))
         .toString();
   }
@@ -361,7 +390,8 @@ class ScanHistoryTableData extends DataClass
       ingredientsJson,
       alternativesJson,
       scannedAt,
-      isSynced);
+      isSynced,
+      imageUrl);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -375,7 +405,8 @@ class ScanHistoryTableData extends DataClass
           other.ingredientsJson == this.ingredientsJson &&
           other.alternativesJson == this.alternativesJson &&
           other.scannedAt == this.scannedAt &&
-          other.isSynced == this.isSynced);
+          other.isSynced == this.isSynced &&
+          other.imageUrl == this.imageUrl);
 }
 
 class ScanHistoryTableCompanion extends UpdateCompanion<ScanHistoryTableData> {
@@ -389,6 +420,7 @@ class ScanHistoryTableCompanion extends UpdateCompanion<ScanHistoryTableData> {
   final Value<String> alternativesJson;
   final Value<DateTime> scannedAt;
   final Value<bool> isSynced;
+  final Value<String?> imageUrl;
   final Value<int> rowid;
   const ScanHistoryTableCompanion({
     this.id = const Value.absent(),
@@ -401,6 +433,7 @@ class ScanHistoryTableCompanion extends UpdateCompanion<ScanHistoryTableData> {
     this.alternativesJson = const Value.absent(),
     this.scannedAt = const Value.absent(),
     this.isSynced = const Value.absent(),
+    this.imageUrl = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   ScanHistoryTableCompanion.insert({
@@ -414,6 +447,7 @@ class ScanHistoryTableCompanion extends UpdateCompanion<ScanHistoryTableData> {
     required String alternativesJson,
     required DateTime scannedAt,
     this.isSynced = const Value.absent(),
+    this.imageUrl = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : id = Value(id),
         productName = Value(productName),
@@ -435,6 +469,7 @@ class ScanHistoryTableCompanion extends UpdateCompanion<ScanHistoryTableData> {
     Expression<String>? alternativesJson,
     Expression<DateTime>? scannedAt,
     Expression<bool>? isSynced,
+    Expression<String>? imageUrl,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -448,6 +483,7 @@ class ScanHistoryTableCompanion extends UpdateCompanion<ScanHistoryTableData> {
       if (alternativesJson != null) 'alternatives_json': alternativesJson,
       if (scannedAt != null) 'scanned_at': scannedAt,
       if (isSynced != null) 'is_synced': isSynced,
+      if (imageUrl != null) 'image_url': imageUrl,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -463,6 +499,7 @@ class ScanHistoryTableCompanion extends UpdateCompanion<ScanHistoryTableData> {
       Value<String>? alternativesJson,
       Value<DateTime>? scannedAt,
       Value<bool>? isSynced,
+      Value<String?>? imageUrl,
       Value<int>? rowid}) {
     return ScanHistoryTableCompanion(
       id: id ?? this.id,
@@ -475,6 +512,7 @@ class ScanHistoryTableCompanion extends UpdateCompanion<ScanHistoryTableData> {
       alternativesJson: alternativesJson ?? this.alternativesJson,
       scannedAt: scannedAt ?? this.scannedAt,
       isSynced: isSynced ?? this.isSynced,
+      imageUrl: imageUrl ?? this.imageUrl,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -512,6 +550,9 @@ class ScanHistoryTableCompanion extends UpdateCompanion<ScanHistoryTableData> {
     if (isSynced.present) {
       map['is_synced'] = Variable<bool>(isSynced.value);
     }
+    if (imageUrl.present) {
+      map['image_url'] = Variable<String>(imageUrl.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -531,6 +572,7 @@ class ScanHistoryTableCompanion extends UpdateCompanion<ScanHistoryTableData> {
           ..write('alternativesJson: $alternativesJson, ')
           ..write('scannedAt: $scannedAt, ')
           ..write('isSynced: $isSynced, ')
+          ..write('imageUrl: $imageUrl, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -914,6 +956,7 @@ typedef $$ScanHistoryTableTableCreateCompanionBuilder
   required String alternativesJson,
   required DateTime scannedAt,
   Value<bool> isSynced,
+  Value<String?> imageUrl,
   Value<int> rowid,
 });
 typedef $$ScanHistoryTableTableUpdateCompanionBuilder
@@ -928,6 +971,7 @@ typedef $$ScanHistoryTableTableUpdateCompanionBuilder
   Value<String> alternativesJson,
   Value<DateTime> scannedAt,
   Value<bool> isSynced,
+  Value<String?> imageUrl,
   Value<int> rowid,
 });
 
@@ -971,6 +1015,9 @@ class $$ScanHistoryTableTableFilterComposer
 
   ColumnFilters<bool> get isSynced => $composableBuilder(
       column: $table.isSynced, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get imageUrl => $composableBuilder(
+      column: $table.imageUrl, builder: (column) => ColumnFilters(column));
 }
 
 class $$ScanHistoryTableTableOrderingComposer
@@ -1014,6 +1061,9 @@ class $$ScanHistoryTableTableOrderingComposer
 
   ColumnOrderings<bool> get isSynced => $composableBuilder(
       column: $table.isSynced, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get imageUrl => $composableBuilder(
+      column: $table.imageUrl, builder: (column) => ColumnOrderings(column));
 }
 
 class $$ScanHistoryTableTableAnnotationComposer
@@ -1054,6 +1104,9 @@ class $$ScanHistoryTableTableAnnotationComposer
 
   GeneratedColumn<bool> get isSynced =>
       $composableBuilder(column: $table.isSynced, builder: (column) => column);
+
+  GeneratedColumn<String> get imageUrl =>
+      $composableBuilder(column: $table.imageUrl, builder: (column) => column);
 }
 
 class $$ScanHistoryTableTableTableManager extends RootTableManager<
@@ -1094,6 +1147,7 @@ class $$ScanHistoryTableTableTableManager extends RootTableManager<
             Value<String> alternativesJson = const Value.absent(),
             Value<DateTime> scannedAt = const Value.absent(),
             Value<bool> isSynced = const Value.absent(),
+            Value<String?> imageUrl = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               ScanHistoryTableCompanion(
@@ -1107,6 +1161,7 @@ class $$ScanHistoryTableTableTableManager extends RootTableManager<
             alternativesJson: alternativesJson,
             scannedAt: scannedAt,
             isSynced: isSynced,
+            imageUrl: imageUrl,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -1120,6 +1175,7 @@ class $$ScanHistoryTableTableTableManager extends RootTableManager<
             required String alternativesJson,
             required DateTime scannedAt,
             Value<bool> isSynced = const Value.absent(),
+            Value<String?> imageUrl = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               ScanHistoryTableCompanion.insert(
@@ -1133,6 +1189,7 @@ class $$ScanHistoryTableTableTableManager extends RootTableManager<
             alternativesJson: alternativesJson,
             scannedAt: scannedAt,
             isSynced: isSynced,
+            imageUrl: imageUrl,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
