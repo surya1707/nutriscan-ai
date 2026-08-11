@@ -1,24 +1,35 @@
 # nutriscan-ai — Backend Test Suite Handover
 
-This is a complete backend testing setup for `github.com/surya1707/nutriscan-ai`
-— functional tests, security/IDOR tests, a k6 load test, CI, and reporting —
-built by cloning your real repo, running its real code, and confirming
-every claim below by direct testing rather than by reading the code and
-assuming. Where that testing turned up real bugs, they're documented with
-regression tests, not silently worked around.
+A complete backend testing setup for `github.com/surya1707/nutriscan-ai` —
+functional tests, security/IDOR tests, direct unit-level business-logic
+tests, a k6 load test, CI, and reporting — built by cloning your real repo,
+running its real code, and confirming every claim below by direct testing
+rather than by reading the code and assuming. Where that testing turned up
+real bugs, they're documented with regression tests, not silently worked
+around.
 
-**Read this first:** this repo has ~11 backend endpoints across 3 routers.
-The methodology you gave me (`final_year.md`) was written against a much
-larger reference project and asks for 400+ structured test cases. Forcing
-that number onto an app this size would mean padding with near-duplicate,
-low-value tests — which the methodology itself explicitly warns against
-("test what is actually there rather than fabricating tests"). I scaled to
-the real surface area instead: **116 real test cases** (87 test functions,
-several parametrized) across functional, security, authentication,
-authorization/IDOR, injection, rate-limiting, and configuration categories,
-plus a load test and CI pipeline. Every test either passes against the real
-app or is a strict `xfail` documenting a confirmed, real bug. See
-`backend/SECURITY-FINDINGS.md` for the full list of what was found.
+**409 test cases** (398 passing, 11 strict-`xfail` documenting confirmed
+bugs), up from an initial pass of 116. The increase is almost entirely
+legitimate data-driven coverage — every one of the 30 entries in the
+E-code additive database, every one of the 20 NOVA processing markers,
+every protected endpoint crossed with every invalid-token type (77 cases),
+every registered route crossed with every HTTP method — not duplicated
+scenarios. **That E-code matrix is what surfaced the most important
+finding in this handover**, described next.
+
+## The headline finding
+
+Building an exhaustive test over all 30 additives in `ecodes.json` (not
+just a sample) surfaced a real, previously-unknown bug: **the fuzzy
+ingredient matcher is case-sensitive in a way that silently misclassifies
+known-dangerous additives.** The app lowercases what a user types before
+matching it, but compares that against the additive database in its
+original mixed case — and `rapidfuzz`'s scorer is case-sensitive. Measured
+across all 30 entries, 5 are confirmed broken outright, including two
+synthetic dyes (Sunset Yellow FCF, Allura Red AC) that silently pass as
+"safe" when entered exactly as printed on a real product label — the only
+way any real user would ever type them. Full root-cause analysis, exact
+confirmed scores, and a one-line fix are in `backend/SECURITY-FINDINGS.md`.
 
 ---
 
@@ -31,13 +42,17 @@ backend/
     test_history.py, test_ingredient_engine.py,      # UNCHANGED — your original
     test_nova_classifier.py, test_scan.py,           # 13 tests, still pass
     test_users.py                                    # exactly as before
-    functional/                          # 45 new tests: scan, users, history, system
-    security/                            # 58 new tests: auth, IDOR, injection,
-                                          #   rate limiting, CORS/headers
+    unit/                                # 60 new tests: direct service-level tests for
+                                          #   IngredientEngine (score algorithm, e-code
+                                          #   matrix) and NovaClassifier (marker/boundary matrix)
+    functional/                          # 69 new tests: scan, users, history, system,
+                                          #   HTTP method sweep
+    security/                            # 231 new tests: auth, auth token matrix, IDOR,
+                                          #   injection, rate limiting, CORS/headers
     reporting/
       generate_reports.py                # builds the xlsx catalog + findings workbook
       ci_helpers/gen_fake_firebase_creds.py
-      output/                            # generated, not committed (see .gitignore note)
+      output/                            # generated xlsx reports, included for convenience
   load/
     k6-load-test.js                      # k6 load/smoke test, validated end-to-end
   requirements-test.txt                  # pytest-cov, openpyxl, bandit, pip-audit, etc.
@@ -65,7 +80,7 @@ cp    /path/to/handover/backend/SECURITY-FINDINGS.md   backend/
 cp -r /path/to/handover/.github                .
 
 git add -A
-git commit -m "Add functional/security backend test suite, load test, and CI"
+git commit -m "Add functional/security/unit backend test suite, load test, and CI"
 ```
 
 `tests/conftest.py` is **replaced**, not merged — see section 4 for exactly
@@ -98,19 +113,20 @@ python tests/reporting/generate_reports.py
 # -> tests/reporting/output/findings.xlsx
 ```
 
-Expected result: **114 passed, 2 xfailed**. The 2 xfails are real, confirmed
-bugs (not test problems) — see `SECURITY-FINDINGS.md`. If either one ever
-shows as `XPASS` instead, it means someone fixed the underlying bug and the
-`xfail` marker should be deleted from that test.
+Expected result: **398 passed, 11 xfailed**. The 11 xfails are real,
+confirmed bugs (not test problems) — see `SECURITY-FINDINGS.md`. If any of
+them ever shows as `XPASS` instead, it means someone fixed the underlying
+bug and the `xfail` marker should be deleted from that test.
 
-Confirmed to be order-independent and stable — ran the full suite
-back-to-back multiple times with identical results.
+Confirmed stable and order-independent — ran the full suite back-to-back
+multiple times with identical results, and coverage sits at **94%**
+(`ingredient_engine.py` and `nova_classifier.py` at 100%).
 
 ### Running the k6 load test
 
 ```bash
 # terminal 1: boot a real live server (needs SOME firebase creds file to start at all --
-# see SECURITY-FINDINGS.md item 5. For local use, your real Firebase creds work fine.)
+# see SECURITY-FINDINGS.md, test-infra finding #5. For local use, your real Firebase creds work fine.)
 cd backend
 export DATABASE_URL="sqlite+aiosqlite:///./local_load_test.db"
 export REDIS_URL="redis://localhost:6379/0"
@@ -152,30 +168,25 @@ New fixtures added (all documented in the file itself):
 `auth_client_2` (second identity), `make_auth_client` (factory for
 malformed/edge-case identity claims), `raw_client` (real, unmocked auth —
 for testing that bad tokens are genuinely rejected), `crash_test_client`
-(the one place a plain `async_client` gives a misleading result — see
-finding #4), and an autouse rate-limiter reset (finding #2).
+(the one place a plain `async_client` gives a misleading result), and an
+autouse rate-limiter reset.
 
 ## 5. Known testing gaps (stated plainly, not hidden)
 
 - **A genuinely valid Firebase ID token can never be tested in this CI.**
-  `raw_client`-based tests (in `tests/security/test_authentication.py`)
-  exhaustively prove that missing, malformed, forged, and garbage tokens
-  are all rejected — but there's no live Firebase project available here to
+  `raw_client`- and token-matrix-based tests exhaustively prove that
+  missing, malformed, forged, and garbage tokens are all rejected (88
+  cases total) — but there's no live Firebase project available here to
   mint a real, valid token, so the "valid token is accepted" direction is
-  untested by this suite. If you want that closed, the standard options
-  are the [Firebase Auth
-  emulator](https://firebase.google.com/docs/emulator-suite) in CI, or a
-  disposable test-only Firebase project with a service account CI can use
-  to mint real tokens.
+  untested by this suite. The standard options to close this are the
+  [Firebase Auth emulator](https://firebase.google.com/docs/emulator-suite)
+  in CI, or a disposable test-only Firebase project.
 - **k6 only load-tests the endpoints that don't require a verified token**
   (`/health`, `/`, `/scan/analyse`, `/scan/barcode`) for the same root
-  reason — see `backend/load/k6-load-test.js`'s header comment and finding
-  #5. `/users/me` and `/history` are functionally covered by pytest but not
-  load-tested.
+  reason — see `backend/load/k6-load-test.js`'s header comment.
 - **`off_client.py`'s network-error branches** (timeout, connection error)
-  are only partially covered — `app/services/off_client.py` sits at 65%
-  coverage, the lowest in the codebase. Worth a follow-up if you want to be
-  thorough there.
+  are only partially covered — it sits at 65% coverage, the lowest in the
+  codebase. Worth a follow-up if you want to be thorough there.
 
 ## 6. CI pipeline (`.github/workflows/backend-tests.yml`)
 
@@ -189,13 +200,12 @@ Three jobs, triggered on push/PR touching `backend/**`, or manually:
   gate: any non-`xfail` failure fails the build. Uploads the coverage HTML,
   JUnit XML, and both xlsx workbooks as artifacts.
 - **`load-test`** — boots a real live server (throwaway CI-only Firebase
-  credentials, see finding #5) and runs the full k6 script.
-  `continue-on-error: true` — informational, doesn't block merges, since
-  shared GitHub-hosted runners aren't a reliable environment for hard
-  latency thresholds.
+  credentials) and runs the full k6 script. `continue-on-error: true` —
+  informational, doesn't block merges, since shared GitHub-hosted runners
+  aren't a reliable environment for hard latency thresholds.
 
 ## 7. If you only have a few minutes to look at one thing
 
-Open `backend/SECURITY-FINDINGS.md`. It's the same content as
-`findings.xlsx` in prose form, and every row links to the exact test that
-proves it.
+Open `backend/SECURITY-FINDINGS.md` and read "The headline finding" at the
+top. It's the same content as `findings.xlsx` in prose form, and every row
+links to the exact test that proves it.

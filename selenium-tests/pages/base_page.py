@@ -140,6 +140,8 @@ class BasePage:
         )
 
     def clear_local_storage(self):
+        if self.driver.current_url.startswith("data:") or self.driver.current_url == "about:blank":
+            self.open("")
         self.driver.execute_script("window.localStorage.clear();")
 
     # ── Viewport ────────────────────────────────────────────────────

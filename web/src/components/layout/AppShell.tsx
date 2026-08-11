@@ -301,11 +301,13 @@ export default function AppShell() {
               </span>
             </div>
             <hr className="divider" style={{ marginBottom: '0.75rem' }} />
-            {NAV_ITEMS.map((item) => (
-              <div key={item.to} onClick={() => setDrawerOpen(false)}>
-                <NavItem {...item} vertical={false} />
-              </div>
-            ))}
+            <nav style={{ display: 'flex', flexDirection: 'column', gap: '0.125rem' }}>
+              {NAV_ITEMS.map((item) => (
+                <div key={item.to} onClick={() => setDrawerOpen(false)}>
+                  <NavItem {...item} vertical={false} />
+                </div>
+              ))}
+            </nav>
           </div>
         </>
       )}
@@ -315,7 +317,7 @@ export default function AppShell() {
         .sidebar-desktop { display: none !important; }
         .bottom-nav      { display: flex !important; }
         .topbar          { display: flex !important; }
-        .hamburger-btn   { display: flex !important; }
+        .hamburger-btn   { display: none !important; }
         .topbar-brand    { display: block !important; }
 
         @media (min-width: 768px) {

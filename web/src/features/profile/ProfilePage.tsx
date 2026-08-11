@@ -225,6 +225,7 @@ export default function ProfilePage() {
         <input
           id="input-display-name"
           type="text"
+          aria-label="Display name"
           className="input"
           placeholder={isGuest ? 'Guest' : user?.displayName ?? 'e.g. Alex'}
           value={displayName}

@@ -31,6 +31,9 @@ class TestProfilePage:
     def test_display_name_field_accepts_input(self, profile_page):
         if not profile_page.exists(*profile_page.DISPLAY_NAME_INPUT):
             pytest.skip("Display-name field not present for this auth state")
+        field = profile_page.wait_visible(*profile_page.DISPLAY_NAME_INPUT)
+        if not field.is_enabled():
+            pytest.skip("Display-name field disabled for this auth state")
         profile_page.set_display_name("QA Selenium Runner")
         field = profile_page.wait_visible(*profile_page.DISPLAY_NAME_INPUT)
         assert field.get_attribute("value") == "QA Selenium Runner"
@@ -63,6 +66,9 @@ class TestProfilePage:
     def test_display_name_field_accepts_various_inputs_without_crashing(self, profile_page, name_value):
         if not profile_page.exists(*profile_page.DISPLAY_NAME_INPUT):
             pytest.skip("Display-name field not present for this auth state")
+        field = profile_page.wait_visible(*profile_page.DISPLAY_NAME_INPUT)
+        if not field.is_enabled():
+            pytest.skip("Display-name field disabled for this auth state")
         profile_page.set_display_name(name_value)
         field = profile_page.wait_visible(*profile_page.DISPLAY_NAME_INPUT)
         assert field.get_attribute("value") == name_value

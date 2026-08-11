@@ -48,7 +48,8 @@ export default function LoginPage() {
   };
 
   const handleEmail = async () => {
-    if (!email || !email.includes('@')) {
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!email || !emailRegex.test(email.trim())) {
       setError('Please enter a valid email address.');
       return;
     }
@@ -179,20 +180,20 @@ export default function LoginPage() {
           </button>
 
           {/* Email */}
-          {!showEmail ? (
-            <button
-              id="btn-email-signin"
-              onClick={() => setShowEmail(true)}
-              className="btn-ghost"
-              style={{ width: '100%' }}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <rect x="2" y="4" width="20" height="16" rx="2"/>
-                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
-              </svg>
-              Continue with Email
-            </button>
-          ) : (
+          <button
+            id="btn-email-signin"
+            onClick={() => setShowEmail(!showEmail)}
+            className="btn-ghost"
+            style={{ width: '100%', marginBottom: showEmail ? '0.5rem' : 0 }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="2" y="4" width="20" height="16" rx="2"/>
+              <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
+            </svg>
+            {showEmail ? "Cancel Email Login" : "Continue with Email"}
+          </button>
+          
+          {showEmail && (
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <input
                 id="input-email"

@@ -10,11 +10,8 @@ class ScanPage(BasePage):
     BARCODE_SUBMIT_BTN = (By.ID, "btn-scan-barcode")
     INGREDIENTS_INPUT = (By.ID, "input-ingredients")
     INGREDIENTS_SUBMIT_BTN = (By.ID, "btn-analyse-ingredients")
-    # The tab toggle between "barcode" and "ingredients" isn't id'd in the
-    # source; located by its accessible text instead.
-    INGREDIENTS_TAB = (By.XPATH, "//*[self::button or self::div][contains(translate(text(),"
-                                  "'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),"
-                                  "'ingredient')]")
+    # The tab toggle between "barcode" and "ingredients"
+    INGREDIENTS_TAB = (By.ID, "tab-ingredients")
     ERROR_TEXT = (By.XPATH, "//*[contains(@style,'flagged-red') or contains(@class,'error')]")
 
     def open_scan(self):

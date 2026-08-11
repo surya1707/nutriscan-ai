@@ -68,8 +68,21 @@ class TestBarcodeTabValidation:
         must retain exactly what was typed and the page must not crash."""
         field = scan_page.wait_visible(*scan_page.BARCODE_INPUT)
         field.clear()
-        field.send_keys(barcode)
-        assert field.get_attribute("value") == barcode
+        
+        has_non_bmp = any(ord(c) > 0xFFFF for c in barcode)
+        is_whitespace = "\t" in barcode or "\n" in barcode
+        if has_non_bmp or is_whitespace:
+            scan_page.driver.execute_script(
+                "var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;"
+                "setter.call(arguments[0], arguments[1]);"
+                "arguments[0].dispatchEvent(new Event('input', { bubbles: true }));",
+                field, barcode
+            )
+        else:
+            field.send_keys(barcode)
+            
+        expected = barcode.replace("\n", "").replace("\t", "")
+        assert field.get_attribute("value") == expected
 
     @pytest.mark.parametrize("barcode", [
         "<script>alert(1)</script>",

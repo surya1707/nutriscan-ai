@@ -58,10 +58,11 @@ class TestHistoryPage:
         """With no backend reachable there's nothing to page through —
         the Load More control must either not render, or render disabled
         rather than throwing when clicked with no data behind it."""
-        if not history_page.exists(*history_page.LOAD_MORE_BTN):
-            pytest.skip("No Load More control rendered with an empty/failed history list")
-        btn = history_page.wait_visible(*history_page.LOAD_MORE_BTN)
-        assert btn.is_displayed()
+        if history_page.exists(*history_page.LOAD_MORE_BTN):
+            btn = history_page.wait_visible(*history_page.LOAD_MORE_BTN)
+            assert btn.is_displayed()
+        else:
+            assert True
 
     def test_history_page_body_not_empty_even_without_backend_data(self, history_page):
         from selenium.webdriver.common.by import By

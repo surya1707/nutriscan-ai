@@ -474,6 +474,7 @@ export default function ResultsPage() {
   if (error || !data) {
     return (
       <div style={{ padding: '2rem 1.25rem', textAlign: 'center' }}>
+        <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--color-dark-green)', marginBottom: '1rem' }}>No Result</h1>
         <p style={{ color: 'var(--color-flagged-red)', marginBottom: '1rem' }}>{error ?? 'Unknown error'}</p>
         <button onClick={() => navigate('/scan')} className="btn-primary">Try again</button>
       </div>
