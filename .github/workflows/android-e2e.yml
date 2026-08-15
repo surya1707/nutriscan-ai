@@ -94,13 +94,13 @@ jobs:
         shard: [1, 2, 3, 4]
         include:
           - shard: 1
-            files: "test_authentication.py test_authorization.py test_navigation.py test_home_dashboard.py"
+            files: "tests/test_authentication.py tests/test_authorization.py tests/test_navigation.py tests/test_home_dashboard.py"
           - shard: 2
-            files: "test_forms.py test_input_validation.py test_scan_history_crud.py test_list_browsing_and_filters.py"
+            files: "tests/test_forms.py tests/test_input_validation.py tests/test_scan_history_crud.py tests/test_list_browsing_and_filters.py"
           - shard: 3
-            files: "test_error_handling.py test_session_management.py test_inapp_messaging.py test_camera_file_upload.py test_offline_handling.py"
+            files: "tests/test_error_handling.py tests/test_session_management.py tests/test_inapp_messaging.py tests/test_camera_file_upload.py tests/test_offline_handling.py"
           - shard: 4
-            files: "test_accessibility.py test_responsive_ui.py test_profile_management.py"
+            files: "tests/test_accessibility.py tests/test_responsive_ui.py tests/test_profile_management.py"
 
     steps:
       - uses: actions/checkout@v4
@@ -138,17 +138,9 @@ jobs:
           disable-animations: true
           script: |
             appium --base-path / --log-level info &
-            APPIUM_PID=$!
             sleep 8
             adb install -r mobile-tests/apk/app-debug.apk
-            cd mobile-tests
-            export APK_PATH="$(pwd)/apk/app-debug.apk"
-            export DEVICE_NAME="emulator-5554"
-            python -m pytest tests/${{ matrix.files }} \
-              --shard-name "shard-${{ matrix.shard }}" \
-              -v --reruns 1 --reruns-delay 3 \
-              -p no:cacheprovider
-            kill $APPIUM_PID || true
+            cd mobile-tests && APK_PATH="$(pwd)/apk/app-debug.apk" DEVICE_NAME="emulator-5554" python -m pytest ${{ matrix.files }} --shard-name "shard-${{ matrix.shard }}" -v --reruns 1 --reruns-delay 3 -p no:cacheprovider
 
       - uses: actions/upload-artifact@v4
         if: always()
