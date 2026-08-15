@@ -1,6 +1,6 @@
 name: Android E2E Tests (Appium + Flutter Driver)
 
-# GitHub-hosted macOS runners include hardware-accelerated (HAXM/KVM
+# GitHub-hosted runners include hardware-accelerated (HAXM/KVM
 # equivalent) Android emulator support, which Linux runners generally
 # don't have without nested virtualization tricks — macos-latest is used
 # deliberately here, not by habit.
