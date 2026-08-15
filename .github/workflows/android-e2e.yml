@@ -120,8 +120,8 @@ jobs:
       - name: Install Appium + test dependencies
         run: |
           npm install -g appium@2.19.0 --no-fund --no-audit
-          appium driver install uiautomator2@4.2.9
-          appium driver install --source=npm appium-flutter-driver@2.19.0
+          appium driver install uiautomator2@4.3.1
+          appium driver install --source=npm appium-flutter-driver@3.4.0
           pip install -r mobile-tests/requirements.txt --break-system-packages || \
             pip install -r mobile-tests/requirements.txt
 

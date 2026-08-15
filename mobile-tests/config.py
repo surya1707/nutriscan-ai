@@ -47,7 +47,7 @@ APK_PATH = os.environ.get("APK_PATH", "")  # resolved to absolute by CI, see scr
 # ── Appium server ────────────────────────────────────────────────────────
 APPIUM_SERVER_URL = os.environ.get("APPIUM_SERVER_URL", "http://127.0.0.1:4723")
 APPIUM_COMMAND_TIMEOUT = int(os.environ.get("APPIUM_COMMAND_TIMEOUT", "12"))  # seconds — see README "gotchas"
-NEW_SESSION_TIMEOUT = int(os.environ.get("NEW_SESSION_TIMEOUT", "60"))
+NEW_SESSION_TIMEOUT = int(os.environ.get("NEW_SESSION_TIMEOUT", "90"))
 
 AUTOMATION_NAME = "Flutter"
 PLATFORM_NAME = "Android"

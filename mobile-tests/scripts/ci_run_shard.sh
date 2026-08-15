@@ -17,10 +17,24 @@ TEST_FILES=("$@")
 echo "== Shard ${SHARD_NUM}: starting Appium =="
 appium --base-path / --log-level info &
 APPIUM_PID=$!
-sleep 8
+sleep 10
 
 echo "== Shard ${SHARD_NUM}: installing APK =="
 adb install -r mobile-tests/apk/app-debug.apk
+
+# Pre-warm the app's Impeller GPU init before the first Appium session.
+# Flutter 3.x / Impeller replaces the Dart isolate once during GPU backend
+# initialisation. If the first Appium session catches the app mid-init it
+# connects to an isolate that is immediately destroyed, causing every
+# flutter:waitFor to return Error:{} from a dead WebSocket.
+# Fix: launch the app briefly via monkey (fires the GPU init cycle), wait
+# for Impeller to finish, then force-stop so the first Appium session gets
+# a clean cold-start against an already-warmed GPU context.
+echo "== Shard ${SHARD_NUM}: pre-warming GPU (Impeller init) =="
+adb shell monkey -p com.example.nutriscan -c android.intent.category.LAUNCHER 1 || true
+sleep 12
+adb shell am force-stop com.example.nutriscan || true
+sleep 2
 
 cd mobile-tests
 export APK_PATH="$(pwd)/apk/app-debug.apk"

@@ -67,6 +67,12 @@ def build_capabilities() -> UiAutomator2Options:
     # Flutter driver capabilities, not exposed as typed UiAutomator2Options fields:
     options.set_capability("noReset", False)
     options.set_capability("fullReset", False)
+    # Wait up to 30s for a stable Dart isolate before sending the first command.
+    # Required on Flutter 3.x / Impeller: the GPU backend replaces the isolate
+    # once during init, so the isolate resolved at session-create time is dead
+    # by the time the first flutter:waitFor arrives. This capability makes the
+    # driver poll for a live isolate instead of failing immediately.
+    options.set_capability("appium:flutterServerLaunchTimeout", 30000)
     return options
 
 
