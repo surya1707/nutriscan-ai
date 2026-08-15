@@ -117,7 +117,7 @@ jobs:
       - name: Install Appium + test dependencies
         run: |
           npm install -g appium@2 --no-fund --no-audit
-          appium driver install uiautomator2
+          appium driver install uiautomator2@4.2.9
           pip install -r mobile-tests/requirements.txt --break-system-packages || \
             pip install -r mobile-tests/requirements.txt
 
