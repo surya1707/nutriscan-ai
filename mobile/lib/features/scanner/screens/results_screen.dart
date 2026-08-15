@@ -51,6 +51,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
               leading: Padding(
                 padding: const EdgeInsets.all(8.0),
                 child: GestureDetector(
+                  key: const ValueKey('results_back_btn'),
                   onTap: () =>
                       context.canPop() ? context.pop() : context.go('/'),
                   child: Container(
@@ -78,6 +79,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
                 Padding(
                   padding: const EdgeInsets.only(right: 12),
                   child: GestureDetector(
+                    key: const ValueKey('results_share_btn'),
                     onTap: () {/* share */},
                     child: Container(
                       width: 36,

@@ -117,6 +117,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                               ),
                             ),
                             IconButton(
+                              key: const ValueKey('profile_sign_out_btn'),
                               icon: const Icon(Icons.logout_rounded, color: AppColors.flaggedRed),
                               onPressed: () {
                                 ref.read(authProvider.notifier).signOut();
@@ -205,6 +206,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         _SectionLabel(label: 'Display name'),
                         const SizedBox(height: 8),
                         TextField(
+                          key: const ValueKey('profile_name_field'),
                           controller: _nameController,
                           style: const TextStyle(
                               fontSize: 15, color: AppColors.textPrimary),
@@ -216,6 +218,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         _SectionLabel(label: 'Allergies'),
                         const SizedBox(height: 10),
                         _ChipGroup(
+                          groupName: 'allergies',
                           items: _allergies,
                           selected: profile.allergies,
                           onToggle: (v) =>
@@ -226,6 +229,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         _SectionLabel(label: 'Chronic conditions'),
                         const SizedBox(height: 10),
                         _ChipGroup(
+                          groupName: 'conditions',
                           items: _conditions,
                           selected: profile.conditions,
                           onToggle: (v) =>
@@ -236,6 +240,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         _SectionLabel(label: 'Dietary goals'),
                         const SizedBox(height: 10),
                         _ChipGroup(
+                          groupName: 'goals',
                           items: _goals,
                           selected: profile.goals,
                           onToggle: (v) =>
@@ -255,6 +260,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     top: 12,
                   ),
                   child: GestureDetector(
+                    key: const ValueKey('profile_save_btn'),
                     onTap: _saving ? null : () => _save(profile),
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 200),
@@ -368,11 +374,13 @@ class _ChipGroup extends StatelessWidget {
   final List<String> items;
   final Set<String> selected;
   final ValueChanged<String> onToggle;
+  final String groupName;
 
   const _ChipGroup({
     required this.items,
     required this.selected,
     required this.onToggle,
+    this.groupName = 'chip',
   });
 
   @override
@@ -383,6 +391,7 @@ class _ChipGroup extends StatelessWidget {
       children: items.map((item) {
         final isSelected = selected.contains(item);
         return GestureDetector(
+          key: ValueKey('profile_chip_${groupName}_$item'),
           onTap: () => onToggle(item),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 150),

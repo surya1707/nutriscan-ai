@@ -90,6 +90,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
               else ...[
                 // Google Sign In Button
                 ElevatedButton.icon(
+                  key: const ValueKey('auth_google_btn'),
                   onPressed: _handleGoogleSignIn,
                   icon: const Icon(Icons.g_mobiledata, size: 32),
                   label: const Text('Continue with Google', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
@@ -107,6 +108,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                 // Email Sign In
                 if (!_showEmailInput)
                   OutlinedButton.icon(
+                    key: const ValueKey('auth_email_toggle_btn'),
                     onPressed: () => setState(() => _showEmailInput = true),
                     icon: const Icon(Icons.email_outlined),
                     label: const Text('Continue with Email', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
@@ -121,6 +123,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                   )
                 else ...[
                   TextField(
+                    key: const ValueKey('auth_email_field'),
                     controller: _emailController,
                     keyboardType: TextInputType.emailAddress,
                     decoration: InputDecoration(
@@ -132,6 +135,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                         borderSide: BorderSide.none,
                       ),
                       suffixIcon: IconButton(
+                        key: const ValueKey('auth_email_send_btn'),
                         icon: const Icon(Icons.send_rounded, color: AppColors.darkGreen),
                         onPressed: _handleEmailSignIn,
                       ),
@@ -143,6 +147,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                 
                 // Guest Sign In
                 TextButton(
+                  key: const ValueKey('auth_guest_btn'),
                   onPressed: _handleGuestSignIn,
                   style: TextButton.styleFrom(
                     foregroundColor: AppColors.textSecondary,

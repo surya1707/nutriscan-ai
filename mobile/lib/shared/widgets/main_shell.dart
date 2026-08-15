@@ -32,21 +32,22 @@ class MainShell extends StatelessWidget {
           border: Border(top: BorderSide(color: AppColors.divider, width: 0.5)),
         ),
         child: BottomNavigationBar(
+          key: const ValueKey('main_bottom_nav'),
           currentIndex: index,
           onTap: (i) => _onTap(context, i),
           items: [
             BottomNavigationBarItem(
-              icon: _NavIcon(icon: Icons.eco_outlined, active: index == 0),
+              icon: _NavIcon(key: const ValueKey('nav_home'), icon: Icons.eco_outlined, active: index == 0),
               activeIcon: _NavIcon(icon: Icons.eco, active: true),
               label: 'Home',
             ),
             BottomNavigationBarItem(
-              icon: _NavIcon(icon: Icons.history_outlined, active: index == 1),
+              icon: _NavIcon(key: const ValueKey('nav_history'), icon: Icons.history_outlined, active: index == 1),
               activeIcon: _NavIcon(icon: Icons.history, active: true),
               label: 'History',
             ),
             BottomNavigationBarItem(
-              icon: _NavIcon(icon: Icons.person_outline, active: index == 2),
+              icon: _NavIcon(key: const ValueKey('nav_profile'), icon: Icons.person_outline, active: index == 2),
               activeIcon: _NavIcon(icon: Icons.person, active: true),
               label: 'Profile',
             ),
@@ -60,7 +61,7 @@ class MainShell extends StatelessWidget {
 class _NavIcon extends StatelessWidget {
   final IconData icon;
   final bool active;
-  const _NavIcon({required this.icon, required this.active});
+  const _NavIcon({super.key, required this.icon, required this.active});
 
   @override
   Widget build(BuildContext context) {

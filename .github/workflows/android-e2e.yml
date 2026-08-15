@@ -1,0 +1,188 @@
+name: Android E2E Tests (Appium + Flutter Driver)
+
+# GitHub-hosted macOS runners include hardware-accelerated (HAXM/KVM
+# equivalent) Android emulator support, which Linux runners generally
+# don't have without nested virtualization tricks — macos-latest is used
+# deliberately here, not by habit.
+#
+# Sharded across 4 emulator jobs, each running its own AVD + Appium
+# server + a slice of mobile-tests/tests/*.py, then merged into one
+# Automation_Test_Report.xlsx by the `merge-reports` job.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'mobile/**'
+      - 'mobile-tests/**'
+      - '.github/workflows/android-e2e.yml'
+  pull_request:
+    paths:
+      - 'mobile/**'
+      - 'mobile-tests/**'
+      - '.github/workflows/android-e2e.yml'
+  workflow_dispatch:
+    inputs:
+      pass_rate_threshold:
+        description: 'Minimum pass rate (%) required for the job to succeed'
+        type: string
+        default: '95'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PASS_RATE_THRESHOLD: ${{ github.event.inputs.pass_rate_threshold || '95' }}
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+
+      - name: flutter pub get
+        working-directory: mobile
+        run: flutter pub get
+
+      - name: Build debug APK from the test entrypoint
+        working-directory: mobile
+        run: flutter build apk --debug -t lib/main_test.dart
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-apk
+          path: mobile/build/app/outputs/flutter-apk/app-debug.apk
+          retention-days: 7
+
+  android-e2e:
+    needs: build-apk
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+        include:
+          - shard: 1
+            files: "test_authentication.py test_authorization.py test_navigation.py test_home_dashboard.py"
+          - shard: 2
+            files: "test_forms.py test_input_validation.py test_scan_history_crud.py test_list_browsing_and_filters.py"
+          - shard: 3
+            files: "test_error_handling.py test_session_management.py test_inapp_messaging.py test_camera_file_upload.py test_offline_handling.py"
+          - shard: 4
+            files: "test_accessibility.py test_responsive_ui.py test_profile_management.py"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: test-apk
+          path: mobile-tests/apk
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Appium + test dependencies
+        run: |
+          npm install -g appium@2 --no-fund --no-audit
+          appium driver install uiautomator2
+          pip install -r mobile-tests/requirements.txt --break-system-packages || \
+            pip install -r mobile-tests/requirements.txt
+
+      - name: Enable KVM / Android emulator acceleration
+        run: |
+          echo "macos-latest runners provide HVF-backed emulator acceleration out of the box."
+
+      - name: Run Android emulator + Appium server + shard tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          target: google_apis
+          arch: x86_64
+          profile: pixel_5
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back emulated
+          disable-animations: true
+          script: |
+            appium --base-path / --log-level info &
+            APPIUM_PID=$!
+            sleep 8
+            adb install -r mobile-tests/apk/app-debug.apk
+            cd mobile-tests
+            export APK_PATH="$(pwd)/apk/app-debug.apk"
+            export DEVICE_NAME="emulator-5554"
+            python -m pytest tests/${{ matrix.files }} \
+              --shard-name "shard-${{ matrix.shard }}" \
+              -v --reruns 1 --reruns-delay 3 \
+              -p no:cacheprovider
+            kill $APPIUM_PID || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: raw-results-shard-${{ matrix.shard }}
+          path: mobile-tests/reports/raw-results.jsonl
+          retention-days: 14
+          if-no-files-found: warn
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots-shard-${{ matrix.shard }}
+          path: mobile-tests/reports/screenshots
+          retention-days: 14
+          if-no-files-found: ignore
+
+  merge-reports:
+    needs: android-e2e
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install openpyxl --break-system-packages || pip install openpyxl
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: raw-results-shard-*
+          path: mobile-tests/reports/_shards
+          merge-multiple: false
+
+      - name: Merge shard result files into one raw-results.jsonl
+        run: |
+          mkdir -p mobile-tests/reports
+          find mobile-tests/reports/_shards -name 'raw-results.jsonl' -exec cat {} + \
+            > mobile-tests/reports/raw-results.jsonl || true
+
+      - name: Generate consolidated Automation_Test_Report.xlsx
+        working-directory: mobile-tests
+        run: python scripts/generate_reports.py
+
+      - name: Enforce pass-rate gate
+        working-directory: mobile-tests
+        env:
+          PASS_RATE_THRESHOLD: ${{ env.PASS_RATE_THRESHOLD }}
+        run: python scripts/check_pass_rate.py
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Automation_Test_Report
+          path: |
+            mobile-tests/reports/Automation_Test_Report.xlsx
+            mobile-tests/reports/execution-results.json
+            mobile-tests/reports/summary.md
+          retention-days: 30

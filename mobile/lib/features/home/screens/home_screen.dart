@@ -80,7 +80,7 @@ class HomeScreen extends ConsumerWidget {
               const SizedBox(height: 24),
 
               // Hero scan card
-              HeroScanCard(onTap: () => context.push('/scanner')),
+              HeroScanCard(key: const ValueKey('home_scan_card'), onTap: () => context.push('/scanner')),
               const SizedBox(height: 16),
 
               // Stats
@@ -88,7 +88,7 @@ class HomeScreen extends ConsumerWidget {
               const SizedBox(height: 16),
 
               // Personalize banner
-              PersonalizeBanner(onTap: () => context.go('/profile')),
+              PersonalizeBanner(key: const ValueKey('home_personalize_banner'), onTap: () => context.go('/profile')),
               const SizedBox(height: 24),
 
               // Recent scans

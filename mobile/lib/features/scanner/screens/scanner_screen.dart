@@ -362,6 +362,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen>
                 ),
                 const SizedBox(height: 32),
                 ElevatedButton.icon(
+                  key: const ValueKey('scanner_web_upload_btn'),
                   onPressed: () {
                     // TODO: Implement image upload and pass to backend OCR
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -378,6 +379,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen>
                 ),
                 const SizedBox(height: 16),
                 ElevatedButton.icon(
+                  key: const ValueKey('scanner_web_manual_btn'),
                   onPressed: () {
                     _showTypeDialog();
                   },
@@ -440,6 +442,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen>
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 _CircleButton(
+                  key: const ValueKey('scanner_back_btn'),
                   icon: Icons.arrow_back_ios_new_rounded,
                   onTap: () =>
                       context.canPop() ? context.pop() : context.go('/'),
@@ -456,11 +459,13 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen>
                 Row(
                   children: [
                     _CircleButton(
+                      key: const ValueKey('scanner_ar_toggle_btn'),
                       icon: _arOverlayEnabled ? Icons.visibility_rounded : Icons.visibility_off_rounded,
                       onTap: () => setState(() => _arOverlayEnabled = !_arOverlayEnabled),
                     ),
                     const SizedBox(width: 8),
                     _CircleButton(
+                      key: const ValueKey('scanner_flash_toggle_btn'),
                       icon: _torchOn
                           ? Icons.flash_on_rounded
                           : Icons.flash_off_rounded,
@@ -549,6 +554,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen>
             children: [
               // Type button
               _BottomActionButton(
+                key: const ValueKey('scanner_type_btn'),
                 icon: Icons.edit_outlined,
                 label: 'Type',
                 onTap: isLoading ? null : _showTypeDialog,
@@ -556,6 +562,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen>
 
               // ── Centre shutter button (primary CTA) ──────────────────────
               GestureDetector(
+                key: const ValueKey('scanner_capture_btn'),
                 onTap: isLoading ? null : _capturePhoto,
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
@@ -590,6 +597,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen>
 
               // Gallery button
               _BottomActionButton(
+                key: const ValueKey('scanner_gallery_btn'),
                 icon: Icons.image_outlined,
                 label: 'Gallery',
                 onTap: isLoading ? null : _pickFromGallery,
@@ -646,6 +654,7 @@ class _TypeIngredientSheet extends StatelessWidget {
                   TextStyle(color: AppColors.textSecondary, fontSize: 13)),
           const SizedBox(height: 16),
           TextField(
+            key: const ValueKey('scanner_manual_text_field'),
             controller: controller,
             maxLines: 6,
             autofocus: true,
@@ -662,6 +671,7 @@ class _TypeIngredientSheet extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
+              key: const ValueKey('scanner_manual_submit_btn'),
               onPressed: () {
                 final text = controller.text.trim();
                 if (text.isNotEmpty) onSubmit(text);
@@ -780,7 +790,7 @@ ScanResult buildResultFromText(String text) {
 class _CircleButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback onTap;
-  const _CircleButton({required this.icon, required this.onTap});
+  const _CircleButton({super.key, required this.icon, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -803,7 +813,7 @@ class _BottomActionButton extends StatelessWidget {
   final VoidCallback? onTap;
 
   const _BottomActionButton(
-      {required this.icon, required this.label, this.onTap});
+      {super.key, required this.icon, required this.label, this.onTap});
 
   @override
   Widget build(BuildContext context) {

@@ -45,10 +45,12 @@ class HistoryScreen extends ConsumerWidget {
                   data: (rows) {
                     if (rows.isEmpty) return const _EmptyHistoryState();
                     return ListView.separated(
+                      key: const ValueKey('history_list'),
                       itemCount: rows.length,
                       separatorBuilder: (_, __) =>
                           Divider(color: AppColors.divider, height: 1),
                       itemBuilder: (context, i) => _ScanHistoryTile(
+                        key: ValueKey('history_tile_${rows[i].id}'),
                         row: rows[i],
                         onTap: () {
                           final result = scanResultFromRow(rows[i]);
@@ -75,6 +77,7 @@ class _ScanHistoryTile extends StatelessWidget {
   final VoidCallback onDelete;
 
   const _ScanHistoryTile({
+    super.key,
     required this.row,
     required this.onTap,
     required this.onDelete,
@@ -151,6 +154,7 @@ class _ScanHistoryTile extends StatelessWidget {
 
             // Delete
             IconButton(
+              key: ValueKey('history_delete_btn_${row.id}'),
               icon: const Icon(Icons.delete_outline,
                   color: AppColors.textMuted, size: 20),
               onPressed: onDelete,
@@ -206,6 +210,7 @@ class _EmptyHistoryState extends StatelessWidget {
           ),
           const SizedBox(height: 28),
           GestureDetector(
+            key: const ValueKey('history_empty_scan_now_btn'),
             onTap: () => context.push('/scanner'),
             child: Container(
               padding:
