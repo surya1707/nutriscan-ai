@@ -64,6 +64,17 @@ jobs:
           fi
           echo "$FIREBASE_OPTIONS_DART" > lib/firebase_options.dart
 
+      - name: Write google-services.json from secret
+        working-directory: mobile
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
+            echo "::error::Repo secret GOOGLE_SERVICES_JSON is not set. Copy the contents of your local mobile/android/app/google-services.json (git-ignored, downloaded from the Firebase console) into a repo secret with that name."
+            exit 1
+          fi
+          echo "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
+
       - name: Build debug APK from the test entrypoint
         working-directory: mobile
         run: flutter build apk --debug -t lib/main_test.dart
