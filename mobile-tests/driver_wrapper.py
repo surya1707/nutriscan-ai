@@ -67,6 +67,16 @@ def build_capabilities() -> UiAutomator2Options:
     # Flutter driver capabilities, not exposed as typed UiAutomator2Options fields:
     options.set_capability("noReset", False)
     options.set_capability("fullReset", False)
+    # Without this, the app has zero runtime permissions after install (Android
+    # 6.0+ default), so the Scanner screen permanently renders its
+    # _NoCameraPermissionView with no capture/gallery/flash/AR buttons at all —
+    # this was the root cause of test_camera_file_upload.py failing 26/26 and
+    # much of test_inapp_messaging.py failing too. autoGrantPermissions grants
+    # every manifest-declared runtime permission (camera included) at install
+    # time, matching what test_capture_with_camera_permission_revoked_* already
+    # assumed was the normal starting state (it explicitly revokes, then grants
+    # back at the end — implying "granted" was always meant to be the default).
+    options.set_capability("appium:autoGrantPermissions", True)
     # Wait up to 30s for a stable Dart isolate before sending the first command.
     # Required on Flutter 3.x / Impeller: the GPU backend replaces the isolate
     # once during init, so the isolate resolved at session-create time is dead

@@ -7,8 +7,8 @@ class HomePage(BasePage):
     SCAN_CARD = "home_scan_card"
     PERSONALIZE_BANNER = "home_personalize_banner"
 
-    def is_loaded(self) -> bool:
-        return self.is_on_screen("home")
+    def is_loaded(self, timeout: int = None) -> bool:
+        return self.is_on_screen("home", timeout)
 
     def tap_scan_card(self) -> None:
         self.tap_key(self.SCAN_CARD)

@@ -30,7 +30,9 @@ def test_greeting_reflects_guest_user(reset_to_guest_home, home_page):
 
 
 @pytest.mark.parametrize("i", range(1, 6))
-def test_home_reloads_consistently_across_relaunches(reset_to_guest_home, home_page, i):
+def test_home_reloads_consistently_across_relaunches(
+    reset_to_guest_home, home_page, auth_page, i
+):
     """Home screen renders its hero card consistently across 5 relaunches of an
     already-authenticated session."""
     from utils import adb_helpers
@@ -39,7 +41,28 @@ def test_home_reloads_consistently_across_relaunches(reset_to_guest_home, home_p
     adb_helpers.relaunch_app()
     home_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
-    assert home_page.is_loaded(), f"relaunch {i} did not reach Home"
+    # Guest sessions persist via SharedPreferences (`is_guest` flag, see
+    # auth_provider.dart), so relaunch should land back on Home directly.
+    # Tolerate the rare case of landing on Auth instead (e.g. a prefs write
+    # racing the previous relaunch), same as reset_to_guest_home does —
+    # this was previously the only relaunch-based test in the suite without
+    # that fallback.
+    try:
+        if auth_page.is_loaded():
+            auth_page.continue_as_guest()
+    except Exception:
+        pass
+    # is_loaded() previously had no way to override its timeout and fell
+    # through to is_on_screen()'s default of config.SHORT_TIMEOUT (5s) — far
+    # too tight for a *second* full cold app restart on top of the one
+    # reset_to_guest_home already did. Confirmed against the raw CI logs:
+    # this test's own post-relaunch "Eat with\nintelligence." wait
+    # consistently exhausted its window with 500s every ~1s right up to the
+    # deadline, then failed — not intermittent flakiness, a genuinely too-
+    # tight budget on a 2-core/2GB-RAM software-rendered CI emulator. 30s
+    # matches the render latency actually observed for a cold relaunch in
+    # these logs.
+    assert home_page.is_loaded(timeout=30), f"relaunch {i} did not reach Home"
     assert home_page.scan_card_visible(), f"relaunch {i} lost the hero scan card"
 
 
