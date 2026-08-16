@@ -84,11 +84,19 @@ class BasePage:
     # ── Actions ──────────────────────────────────────────────────────
     def tap_key(self, key: str, timeout: int = None) -> None:
         self.wait_for_key(key, timeout)
-        self.driver.execute_script("flutter:click", self.by_key(key))
+        # appium-flutter-driver@2.19.0 registers this handler as
+        # "clickElement", not "click" — "flutter:click" throws
+        # `Command not supported: "flutter:click"` immediately (verified
+        # against execute.js's commandHandlers table). This was the root
+        # cause of the near-100% Android E2E failure rate: almost every
+        # test taps something as its first real action, so the whole
+        # suite failed at step one and burned the rest of its budget on
+        # doomed rerun/timeout loops.
+        self.driver.execute_script("flutter:clickElement", self.by_key(key))
 
     def tap_text(self, text: str, timeout: int = None) -> None:
         self.wait_for_text(text, timeout)
-        self.driver.execute_script("flutter:click", self.by_text(text))
+        self.driver.execute_script("flutter:clickElement", self.by_text(text))
 
     def enter_text_by_key(self, key: str, value: str, timeout: int = None) -> None:
         self.wait_for_key(key, timeout)
