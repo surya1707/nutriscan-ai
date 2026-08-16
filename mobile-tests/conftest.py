@@ -19,7 +19,7 @@ import time
 import pytest
 
 import config
-from driver_wrapper import new_driver, quit_driver
+from driver_wrapper import DriverProxy, new_driver, quit_driver
 from pages.auth_page import AuthPage
 from pages.history_page import HistoryPage
 from pages.home_page import HomePage
@@ -44,9 +44,14 @@ def driver():
     os.makedirs(config.REPORTS_DIR, exist_ok=True)
     os.makedirs(config.SCREENSHOTS_DIR, exist_ok=True)
     os.makedirs(config.LOGS_DIR, exist_ok=True)
-    d = new_driver()
-    yield d
-    quit_driver(d)
+    # Wrapped in DriverProxy (not the raw webdriver) so that any fixture
+    # or test that force-stops/relaunches the app via raw adb can call
+    # `driver.reconnect()` afterwards and get a session bound to the new
+    # process's Dart isolate, instead of silently continuing to talk to
+    # a killed one. See DriverProxy's docstring in driver_wrapper.py.
+    proxy = DriverProxy(new_driver())
+    yield proxy
+    quit_driver(proxy._driver)
 
 
 @pytest.fixture
@@ -92,6 +97,13 @@ def reset_to_guest_home(driver, auth_page, home_page):
     adb_helpers.force_stop_app()
     adb_helpers.relaunch_app()
     time.sleep(2)
+    # The relaunch above just handed the app a brand-new Dart isolate.
+    # The existing Flutter-Driver session (created once for the whole
+    # shard) is still wired to the isolate from before this force-stop
+    # and will fail/timeout on every command from here on unless we
+    # reconnect. This is the fix for the near-100% failure rate seen
+    # when this reconnect was missing.
+    driver.reconnect()
     try:
         if auth_page.is_loaded():
             auth_page.continue_as_guest()

@@ -37,6 +37,7 @@ def test_home_reloads_consistently_across_relaunches(reset_to_guest_home, home_p
     import time
     adb_helpers.force_stop_app()
     adb_helpers.relaunch_app()
+    home_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     assert home_page.is_loaded(), f"relaunch {i} did not reach Home"
     assert home_page.scan_card_visible(), f"relaunch {i} lost the hero scan card"

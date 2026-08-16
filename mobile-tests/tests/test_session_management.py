@@ -24,6 +24,7 @@ def test_session_persists_across_process_kill(reset_to_guest_home, home_page):
     session, since Firebase Auth persists its token to disk."""
     adb_helpers.force_stop_app()
     adb_helpers.relaunch_app()
+    home_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     assert home_page.is_loaded()
 
@@ -33,6 +34,7 @@ def test_session_cleared_by_app_data_wipe(main_shell, auth_page):
     (used deliberately by many other tests as a clean-slate fixture)."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     assert auth_page.is_loaded()
 
@@ -58,6 +60,7 @@ def test_session_stable_across_repeated_kill_relaunch_cycles(reset_to_guest_home
     silently dropping back to the auth screen."""
     adb_helpers.force_stop_app()
     adb_helpers.relaunch_app()
+    home_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     assert home_page.is_loaded(), f"cycle {cycle}: session was lost on relaunch"
 
@@ -70,6 +73,7 @@ def test_new_session_starts_clean_after_data_wipe_and_new_guest_login(
     on-device data."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    home_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     if auth_page.is_loaded():
         auth_page.continue_as_guest()
@@ -87,6 +91,7 @@ def test_sign_out_then_re_login_as_guest_cycles_cleanly(
     previous login affecting the new one."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    home_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     auth_page.continue_as_guest()
     assert home_page.is_loaded(), f"cycle {i}: guest login failed"

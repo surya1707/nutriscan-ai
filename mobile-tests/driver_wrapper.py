@@ -100,3 +100,47 @@ def quit_driver(driver) -> None:
         # not just Exception, since a signal-driven timeout mid-teardown
         # can raise something that isn't a plain Exception subclass.
         pass
+
+
+class DriverProxy:
+    """Transparent wrapper around the real Appium/Flutter-Driver session
+    that can be reconnected in place.
+
+    ROOT CAUSE this exists to fix: `utils.adb_helpers.force_stop_app()` /
+    `relaunch_app()` kill and restart the app process directly via
+    `adb shell`, completely outside Appium's own app-lifecycle commands.
+    That's necessary because this engine combo doesn't support
+    `driver.background_app()` (see adb_helpers module docstring) — but it
+    means every such restart hands the app a brand-new Dart isolate that
+    the *existing* Flutter-Driver session was never told about. The
+    session's `appium:flutterServerLaunchTimeout` capability only waits
+    for a live isolate once, at initial session creation — it does not
+    re-run on a later adb-triggered relaunch. Every `flutter:*` command
+    sent afterwards (waitFor/click/enterText/getText) is talking to a
+    process that no longer exists, so it fails or times out. Since the
+    `driver` fixture is session-scoped (one connection for the whole
+    shard) and nearly every test resets app state this way, this is why
+    the suite fails almost universally rather than test-by-test.
+
+    Fix: after any raw-adb force-stop/relaunch, call `.reconnect()` to
+    quit the stale session and open a fresh one — reusing the same
+    session-creation path (`new_driver()`) that already correctly waits
+    for a live isolate before returning.
+    """
+
+    def __init__(self, driver):
+        self._driver = driver
+
+    def reconnect(self):
+        """Quit the (likely already-dead) session and open a fresh one
+        against whatever app process is currently running. Call this
+        immediately after any `adb_helpers.force_stop_app()` /
+        `relaunch_app()` / `clear_app_data()` + relaunch sequence."""
+        quit_driver(self._driver)
+        self._driver = new_driver()
+        return self._driver
+
+    def __getattr__(self, name):
+        # Forward everything (execute_script, get_screenshot_as_file,
+        # command_executor, ...) to whichever real driver is current.
+        return getattr(self._driver, name)

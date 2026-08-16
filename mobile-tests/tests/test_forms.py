@@ -104,6 +104,7 @@ def test_auth_email_field_is_single_line(auth_page):
     import time
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     auth_page.open_email_input()
     assert auth_page.email_field_visible()
@@ -117,6 +118,7 @@ def test_auth_email_field_clears_between_cold_starts(auth_page, i):
     import time
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     auth_page.open_email_input()
     auth_page.enter_email(f"iteration{i}@example.com")

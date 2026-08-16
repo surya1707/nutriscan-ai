@@ -99,6 +99,7 @@ def test_auth_email_field_boundary_inputs(auth_page, value):
     without the app crashing or the field disappearing."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     auth_page.open_email_input()
     auth_page.enter_email(value)

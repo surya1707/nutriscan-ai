@@ -28,6 +28,7 @@ def test_unauthenticated_state_does_not_expose_protected_screen(auth_page, scree
     redirects to /auth before any protected screen marker becomes visible."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     from config import ROUTE_TEXT_MARKERS
     assert not auth_page.current_screen_contains(ROUTE_TEXT_MARKERS[screen], timeout=3)
@@ -37,6 +38,7 @@ def test_signed_out_user_lands_on_auth_screen(auth_page):
     """A signed-out cold start always resolves to /auth, never a blank/protected screen."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     assert auth_page.is_loaded()
 
@@ -46,6 +48,7 @@ def test_guest_is_treated_as_authenticated_for_routing(auth_page, home_page):
     if anonymous, Firebase Auth session) — home becomes reachable."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     auth_page.continue_as_guest()
     assert home_page.is_loaded()
@@ -86,6 +89,7 @@ def test_auth_guard_holds_across_repeated_signout_signin_cycles(
     guest-login -> sign-out cycles (catches stale-provider-state regressions)."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     auth_page.continue_as_guest()
     assert home_page.is_loaded(), f"cycle {cycle}: guard blocked legitimate guest access"
@@ -106,6 +110,7 @@ def test_killed_process_relaunch_reevaluates_guard_correctly(reset_to_guest_home
     launch and still reaches Home for a persisted guest session."""
     adb_helpers.force_stop_app()
     adb_helpers.relaunch_app()
+    home_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     assert home_page.is_loaded()
 

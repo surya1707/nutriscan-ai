@@ -29,6 +29,7 @@ def test_empty_history_shows_empty_state(main_shell, history_page):
     """A freshly cleared account shows the empty-history state, not a blank screen."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    main_shell.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     from pages.auth_page import AuthPage
     auth = AuthPage(main_shell.driver)
@@ -44,6 +45,7 @@ def test_empty_state_is_stable_across_repeated_visits(reset_to_guest_home, main_
     the History tab (no flicker into a broken loading state)."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    main_shell.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     from pages.auth_page import AuthPage
     auth = AuthPage(main_shell.driver)
@@ -67,6 +69,7 @@ def test_history_survives_relaunch_with_no_data(main_shell, history_page):
     relaunch on a fresh account with zero scans."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    main_shell.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     from pages.auth_page import AuthPage
     auth = AuthPage(main_shell.driver)
@@ -74,6 +77,7 @@ def test_history_survives_relaunch_with_no_data(main_shell, history_page):
         auth.continue_as_guest()
     adb_helpers.force_stop_app()
     adb_helpers.relaunch_app()
+    main_shell.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     main_shell.go_history()
     assert history_page.is_empty_state_visible() or history_page.is_list_visible()
@@ -96,6 +100,7 @@ def test_history_data_isolated_per_clean_account(main_shell, history_page):
     proving history data is not baked into the APK / falsely cached."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    main_shell.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     from pages.auth_page import AuthPage
     auth = AuthPage(main_shell.driver)
@@ -118,6 +123,7 @@ def test_history_empty_state_cta_is_functional(reset_to_guest_home, main_shell, 
     """The empty-state 'Scan Now' CTA is a live navigation control, not dead UI."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    main_shell.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     from pages.auth_page import AuthPage
     auth = AuthPage(main_shell.driver)

@@ -94,6 +94,7 @@ def test_profile_changes_persist_across_app_relaunch(reset_to_guest_home, main_s
     profile_page.save()
     adb_helpers.force_stop_app()
     adb_helpers.relaunch_app()
+    main_shell.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     main_shell.go_profile()
     assert profile_page.chip_visible("allergies", "Sesame")

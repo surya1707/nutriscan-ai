@@ -43,17 +43,53 @@ RAW_RESULTS_PATH = os.path.join(config.REPORTS_DIR, "raw-results.jsonl")
 EXECUTION_RESULTS_PATH = os.path.join(config.REPORTS_DIR, "execution-results.json")
 
 
-def load_results():
+def load_raw_rows():
+    """Every attempt (original + reruns from `--reruns 1`), unmodified."""
     if not os.path.exists(RAW_RESULTS_PATH):
         return []
-    results = []
+    rows = []
     with open(RAW_RESULTS_PATH, encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
             if not line:
                 continue
-            results.append(json.loads(line))
-    return results
+            rows.append(json.loads(line))
+    return rows
+
+
+def dedupe_to_final_attempt(raw_rows):
+    """Collapse repeated rows for the same test_id (pytest-rerunfailures
+    logs the original attempt AND every rerun as separate rows) down to
+    ONE result per test -- the last attempt, since that's what pytest
+    itself treats as the test's real outcome. Also tags each kept row
+    with `attempts` so a test that failed then passed on rerun is still
+    visible as flaky rather than silently looking clean.
+
+    Without this step, a run with 450 unique tests where ~410 failed at
+    least once produces ~800+ raw rows, and both the total test count
+    and the pass/fail split get double-counted in the summary/xlsx (a
+    test can land in both the Passed and Failed sheets: once per
+    attempt).
+    """
+    order = {}
+    by_test = {}
+    for i, r in enumerate(raw_rows):
+        tid = r["test_id"]
+        order.setdefault(tid, i)
+        by_test.setdefault(tid, []).append(r)
+
+    final = []
+    for tid, attempts in by_test.items():
+        last = dict(attempts[-1])
+        last["attempts"] = len(attempts)
+        last["flaky"] = len(attempts) > 1 and last["status"] == "passed"
+        final.append(last)
+    final.sort(key=lambda r: order[r["test_id"]])
+    return final
+
+
+def load_results():
+    return dedupe_to_final_attempt(load_raw_rows())
 
 
 def write_execution_results_json(results, summary, run_at):
@@ -69,19 +105,40 @@ def write_execution_results_json(results, summary, run_at):
         json.dump(payload, fh, indent=2)
 
 
-def summarize(results):
+def load_collected_ids():
+    """Test IDs pytest --collect-only saw before the run started (written
+    per-shard by ci_run_shard.sh, merged by the CI workflow into
+    collected-all.txt). Empty list if that file isn't present (e.g. a
+    local/manual run), in which case never-executed detection is simply
+    skipped rather than false-alarming."""
+    path = os.path.join(config.REPORTS_DIR, "collected-all.txt")
+    if not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as fh:
+        return [line.strip() for line in fh if line.strip()]
+
+
+def summarize(results, collected_ids=None):
     counts = Counter(r["status"] for r in results)
-    total = len(results)
+    total = len(results)  # unique tests with at least one recorded attempt
     passed = counts.get("passed", 0)
     failed = counts.get("failed", 0)
     skipped = counts.get("skipped", 0)
     executed = passed + failed
     pass_rate = round((passed / executed) * 100, 2) if executed else 0.0
     total_duration = round(sum(r.get("duration_s", 0.0) for r in results), 3)
+    total_attempts = sum(r.get("attempts", 1) for r in results)
+    flaky = sum(1 for r in results if r.get("flaky"))
     by_module = {}
     for r in results:
         mod = r.get("module", "unknown")
         by_module.setdefault(mod, Counter())[r["status"]] += 1
+
+    never_executed = []
+    if collected_ids:
+        seen = {r["test_id"] for r in results}
+        never_executed = sorted(tid for tid in collected_ids if tid not in seen)
+
     return {
         "total": total,
         "passed": passed,
@@ -89,6 +146,11 @@ def summarize(results):
         "skipped": skipped,
         "pass_rate": pass_rate,
         "total_duration_s": total_duration,
+        "total_attempts": total_attempts,  # rows in raw-results.jsonl, incl. reruns
+        "flaky": flaky,  # failed at least once but passed on a rerun
+        "collected": len(collected_ids) if collected_ids else None,
+        "never_executed": len(never_executed),
+        "never_executed_ids": never_executed,
         "by_module": {k: dict(v) for k, v in by_module.items()},
     }
 
@@ -166,15 +228,19 @@ def write_xlsx(results, summary, out_path, run_at=None):
         ("Run At", run_at or datetime.now(timezone.utc).isoformat()),
         ("App Package", config.APP_PACKAGE),
         ("Device", config.DEVICE_NAME),
-        ("Total Tests", summary["total"]),
+        ("Total Tests (unique)", summary["total"]),
         ("Passed", summary["passed"]),
         ("Failed", summary["failed"]),
         ("Skipped", summary["skipped"]),
+        ("Flaky (failed then passed on rerun)", summary["flaky"]),
         ("Pass Rate (%)", summary["pass_rate"]),
         ("Total Duration (s)", summary["total_duration_s"]),
+        ("Total Attempts (incl. reruns)", summary["total_attempts"]),
+        ("Collected (expected)", summary["collected"] if summary["collected"] is not None else "n/a"),
+        ("Never Executed", summary["never_executed"]),
     ]:
         metrics.append([metric, value])
-    metrics.column_dimensions["A"].width = 22
+    metrics.column_dimensions["A"].width = 30
     metrics.column_dimensions["B"].width = 49
 
     defects = wb.create_sheet("Defect Summary")
@@ -191,6 +257,14 @@ def write_xlsx(results, summary, out_path, run_at=None):
     defects.column_dimensions["C"].width = 30
     defects.column_dimensions["D"].width = 12
 
+    if summary.get("never_executed_ids"):
+        never = wb.create_sheet("Never Executed")
+        _make_header(never, ["#", "Test ID"], _HDR_SKIPPED)
+        for seq, tid in enumerate(summary["never_executed_ids"], start=1):
+            never.append([seq, _test_id(tid)])
+        never.column_dimensions["A"].width = 6
+        never.column_dimensions["B"].width = 60
+
     wb.save(out_path)
     print(f"Wrote {out_path}")
 
@@ -199,12 +273,22 @@ def write_summary_md(summary, out_path):
     lines = [
         "# NutriScan AI — Android E2E Test Summary",
         "",
-        f"- **Total executed:** {summary['passed'] + summary['failed']}",
+        f"- **Total executed (unique tests):** {summary['passed'] + summary['failed']}",
         f"- **Passed:** {summary['passed']}",
         f"- **Failed:** {summary['failed']}",
         f"- **Skipped:** {summary['skipped']}",
+        f"- **Flaky (failed once, passed on rerun):** {summary['flaky']}",
         f"- **Pass rate:** {summary['pass_rate']}% (threshold: {config.PASS_RATE_THRESHOLD}%)",
         f"- **Total duration:** {summary['total_duration_s']}s",
+        f"- **Total attempts recorded (incl. reruns):** {summary['total_attempts']}",
+    ]
+    if summary.get("collected") is not None:
+        lines.append(
+            f"- **Collected (expected):** {summary['collected']} — "
+            f"**Never executed:** {summary['never_executed']}"
+            + (" ⚠️ some tests did not run (likely a timeout mid-shard)" if summary['never_executed'] else "")
+        )
+    lines += [
         "",
         "## By module",
         "",
@@ -213,6 +297,9 @@ def write_summary_md(summary, out_path):
     ]
     for mod, counts in sorted(summary["by_module"].items()):
         lines.append(f"| `{mod}` | {counts.get('passed', 0)} | {counts.get('failed', 0)} | {counts.get('skipped', 0)} |")
+    if summary.get("never_executed_ids"):
+        lines += ["", "## Never executed", ""]
+        lines += [f"- `{tid}`" for tid in summary["never_executed_ids"]]
     with open(out_path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
 
@@ -221,11 +308,13 @@ def main():
     os.makedirs(config.REPORTS_DIR, exist_ok=True)
     results = load_results()
     if not results:
-        print(f"WARNING: no results found at {RESULTS_PATH} — did pytest run?", file=sys.stderr)
+        print(f"WARNING: no results found at {RAW_RESULTS_PATH} — did pytest run?", file=sys.stderr)
+    collected_ids = load_collected_ids()
     run_at = datetime.now(timezone.utc).isoformat()
-    summary = summarize(results)
-    print(f"Total={summary['total']} Passed={summary['passed']} Failed={summary['failed']} "
-          f"Skipped={summary['skipped']} PassRate={summary['pass_rate']}% Duration={summary['total_duration_s']}s")
+    summary = summarize(results, collected_ids)
+    print(f"Total(unique)={summary['total']} Passed={summary['passed']} Failed={summary['failed']} "
+          f"Skipped={summary['skipped']} PassRate={summary['pass_rate']}% Duration={summary['total_duration_s']}s "
+          f"Attempts={summary['total_attempts']} NeverExecuted={summary['never_executed']}")
     write_execution_results_json(results, summary, run_at)
     write_summary_md(summary, os.path.join(config.REPORTS_DIR, "summary.md"))
     write_xlsx(results, summary, os.path.join(config.REPORTS_DIR, "Automation_Test_Report.xlsx"), run_at=run_at)

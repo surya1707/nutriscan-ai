@@ -40,6 +40,17 @@ cd mobile-tests
 export APK_PATH="$(pwd)/apk/app-debug.apk"
 export DEVICE_NAME="emulator-5554"
 
+# Record the full set of test IDs this shard is SUPPOSED to run, before
+# executing anything. If the job gets killed partway through (e.g. the
+# 120-minute cap), raw-results.jsonl only contains whatever finished --
+# there's otherwise no record that the rest never ran at all. Diffing
+# this list against raw-results.jsonl at merge time is how
+# generate_reports.py reports genuinely-never-executed tests instead of
+# them just silently vanishing from the totals.
+mkdir -p reports
+python -m pytest "${TEST_FILES[@]}" --collect-only -q -p no:cacheprovider \
+  | grep '::' > "reports/collected-shard-${SHARD_NUM}.txt" || true
+
 echo "== Shard ${SHARD_NUM}: running pytest on: ${TEST_FILES[*]} =="
 set +e
 python -m pytest "${TEST_FILES[@]}" \

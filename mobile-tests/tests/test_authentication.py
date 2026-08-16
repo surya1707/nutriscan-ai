@@ -31,6 +31,7 @@ def test_google_button_visible(auth_page, reset_to_guest_home):
     """Google sign-in button is present on the auth screen."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     assert auth_page.is_displayed_by_key(auth_page.GOOGLE_BTN)
 
@@ -39,6 +40,7 @@ def test_guest_button_visible(auth_page, reset_to_guest_home):
     """Continue-as-guest control is present on the auth screen."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     assert auth_page.is_displayed_by_key(auth_page.GUEST_BTN)
 
@@ -47,6 +49,7 @@ def test_email_toggle_reveals_email_field(auth_page):
     """Tapping 'use email' reveals the email input field."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     assert not auth_page.email_field_visible()
     auth_page.open_email_input()
@@ -57,6 +60,7 @@ def test_email_field_accepts_text(auth_page):
     """Email field accepts typed input."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     auth_page.open_email_input()
     auth_page.enter_email("student@example.com")
@@ -67,6 +71,7 @@ def test_send_button_visible_after_email_toggle(auth_page):
     """Send-link button becomes visible once email entry is open."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     auth_page.open_email_input()
     assert auth_page.is_displayed_by_key(auth_page.EMAIL_SEND_BTN)
@@ -76,6 +81,7 @@ def test_guest_login_reaches_home(auth_page, home_page):
     """Continue as Guest lands on the Home screen."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     auth_page.continue_as_guest()
     assert home_page.is_loaded()
@@ -85,6 +91,7 @@ def test_guest_login_shows_bottom_nav(auth_page, main_shell):
     """Guest session lands inside the main shell (bottom nav present)."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     auth_page.continue_as_guest()
     assert main_shell.is_visible()
@@ -94,11 +101,13 @@ def test_guest_session_persists_across_relaunch(auth_page, home_page):
     """A guest session survives a force-stop + relaunch (not a fresh login each time)."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     auth_page.continue_as_guest()
     assert home_page.is_loaded()
     adb_helpers.force_stop_app()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     assert home_page.is_loaded(), "guest session was not restored after relaunch"
 
@@ -115,6 +124,7 @@ def test_fresh_install_shows_auth_screen(auth_page):
     """A cleared app (fresh install simulation) shows Auth, not Home."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     assert auth_page.is_loaded()
 
@@ -133,6 +143,7 @@ def test_email_field_accepts_various_valid_formats(auth_page, email):
     """Email field accepts a range of RFC-valid address formats."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     auth_page.open_email_input()
     auth_page.enter_email(email)
@@ -156,6 +167,7 @@ def test_email_field_does_not_crash_on_malformed_input(auth_page, bad_email):
     documents that the field is permissive, not that it validates)."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     auth_page.open_email_input()
     auth_page.enter_email(bad_email)
@@ -168,6 +180,7 @@ def test_repeated_guest_login_is_idempotent(auth_page, home_page, attempt):
     the app in a broken state — checked across 5 independent cold starts."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     auth_page.continue_as_guest()
     assert home_page.is_loaded()
@@ -179,6 +192,7 @@ def test_back_button_on_auth_screen_does_not_crash(auth_page):
     from config import DEVICE_NAME
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     subprocess.run(["adb", "-s", DEVICE_NAME, "shell", "input", "keyevent", "KEYCODE_BACK"], timeout=10)
     time.sleep(1)
@@ -189,6 +203,7 @@ def test_email_toggle_is_reversible(auth_page):
     """Email entry can be opened; the toggle control itself remains visible after opening."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     auth_page.open_email_input()
     assert auth_page.email_field_visible()
@@ -199,6 +214,7 @@ def test_google_button_tap_does_not_crash_app(auth_page):
     native account chooser or a graceful no-op rather than crashing the app."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     auth_page.tap_google()
     time.sleep(2)
@@ -215,6 +231,7 @@ def test_guest_login_at_varied_app_warm_up_delays(auth_page, home_page, delay_s)
     extra time to finish its Firebase.initializeApp() warm-up."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2 + delay_s)
     auth_page.continue_as_guest()
     assert home_page.is_loaded()
@@ -224,11 +241,13 @@ def test_multiple_relaunches_keep_guest_session_stable(auth_page, home_page):
     """Guest session survives three consecutive force-stop/relaunch cycles."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     auth_page.continue_as_guest()
     for _ in range(3):
         adb_helpers.force_stop_app()
         adb_helpers.relaunch_app()
+        auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
         time.sleep(2)
     assert home_page.is_loaded()
 
@@ -237,6 +256,7 @@ def test_auth_screen_title_visible(auth_page):
     """Auth screen shows the app name as its headline."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     assert auth_page.wait_for_text("NutriScan AI", timeout=10)
 
@@ -247,6 +267,7 @@ def test_guest_login_stress_repeated_cold_starts(auth_page, home_page, i):
     intermittent Firebase Auth / Drift DB init races."""
     adb_helpers.clear_app_data()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(2)
     auth_page.continue_as_guest()
     assert home_page.is_loaded(), f"cold start #{i} failed to reach Home after guest login"

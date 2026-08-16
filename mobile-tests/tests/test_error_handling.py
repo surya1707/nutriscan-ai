@@ -78,6 +78,7 @@ def test_offline_at_app_cold_start_does_not_block_guest_login(auth_page, home_pa
     adb_helpers.clear_app_data()
     adb_helpers.set_network_offline()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(3)
     try:
         if auth_page.is_loaded():

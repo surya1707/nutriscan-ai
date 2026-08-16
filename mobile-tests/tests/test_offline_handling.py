@@ -78,6 +78,7 @@ def test_guest_login_works_fully_offline(auth_page, home_page):
     adb_helpers.clear_app_data()
     adb_helpers.set_network_offline()
     adb_helpers.relaunch_app()
+    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
     time.sleep(3)
     try:
         if auth_page.is_loaded():

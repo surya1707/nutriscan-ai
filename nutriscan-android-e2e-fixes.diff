@@ -1,0 +1,779 @@
+diff --git a/.github/workflows/android-e2e.yml b/.github/workflows/android-e2e.yml
+index e239cd3..7c65aeb 100644
+--- a/.github/workflows/android-e2e.yml
++++ b/.github/workflows/android-e2e.yml
+@@ -41,6 +41,7 @@ env:
+ jobs:
+   build-apk:
+     runs-on: ubuntu-latest
++    timeout-minutes: 30
+     steps:
+       - uses: actions/checkout@v4
+ 
+@@ -146,7 +147,9 @@ jobs:
+         if: always()
+         with:
+           name: raw-results-shard-${{ matrix.shard }}
+-          path: mobile-tests/reports/raw-results.jsonl
++          path: |
++            mobile-tests/reports/raw-results.jsonl
++            mobile-tests/reports/collected-shard-${{ matrix.shard }}.txt
+           retention-days: 14
+           if-no-files-found: warn
+ 
+@@ -162,6 +165,7 @@ jobs:
+     needs: android-e2e
+     if: always()
+     runs-on: ubuntu-latest
++    timeout-minutes: 15
+     steps:
+       - uses: actions/checkout@v4
+ 
+@@ -182,6 +186,8 @@ jobs:
+           mkdir -p mobile-tests/reports
+           find mobile-tests/reports/_shards -name 'raw-results.jsonl' -exec cat {} + \
+             > mobile-tests/reports/raw-results.jsonl || true
++          find mobile-tests/reports/_shards -name 'collected-shard-*.txt' -exec cat {} + \
++            > mobile-tests/reports/collected-all.txt || true
+ 
+       - name: Generate consolidated Automation_Test_Report.xlsx
+         working-directory: mobile-tests
+diff --git a/mobile-tests/conftest.py b/mobile-tests/conftest.py
+index 2649b3c..dfba484 100644
+--- a/mobile-tests/conftest.py
++++ b/mobile-tests/conftest.py
+@@ -19,7 +19,7 @@ import time
+ import pytest
+ 
+ import config
+-from driver_wrapper import new_driver, quit_driver
++from driver_wrapper import DriverProxy, new_driver, quit_driver
+ from pages.auth_page import AuthPage
+ from pages.history_page import HistoryPage
+ from pages.home_page import HomePage
+@@ -44,9 +44,14 @@ def driver():
+     os.makedirs(config.REPORTS_DIR, exist_ok=True)
+     os.makedirs(config.SCREENSHOTS_DIR, exist_ok=True)
+     os.makedirs(config.LOGS_DIR, exist_ok=True)
+-    d = new_driver()
+-    yield d
+-    quit_driver(d)
++    # Wrapped in DriverProxy (not the raw webdriver) so that any fixture
++    # or test that force-stops/relaunches the app via raw adb can call
++    # `driver.reconnect()` afterwards and get a session bound to the new
++    # process's Dart isolate, instead of silently continuing to talk to
++    # a killed one. See DriverProxy's docstring in driver_wrapper.py.
++    proxy = DriverProxy(new_driver())
++    yield proxy
++    quit_driver(proxy._driver)
+ 
+ 
+ @pytest.fixture
+@@ -92,6 +97,13 @@ def reset_to_guest_home(driver, auth_page, home_page):
+     adb_helpers.force_stop_app()
+     adb_helpers.relaunch_app()
+     time.sleep(2)
++    # The relaunch above just handed the app a brand-new Dart isolate.
++    # The existing Flutter-Driver session (created once for the whole
++    # shard) is still wired to the isolate from before this force-stop
++    # and will fail/timeout on every command from here on unless we
++    # reconnect. This is the fix for the near-100% failure rate seen
++    # when this reconnect was missing.
++    driver.reconnect()
+     try:
+         if auth_page.is_loaded():
+             auth_page.continue_as_guest()
+diff --git a/mobile-tests/driver_wrapper.py b/mobile-tests/driver_wrapper.py
+index 8485b43..d024ff6 100644
+--- a/mobile-tests/driver_wrapper.py
++++ b/mobile-tests/driver_wrapper.py
+@@ -100,3 +100,47 @@ def quit_driver(driver) -> None:
+         # not just Exception, since a signal-driven timeout mid-teardown
+         # can raise something that isn't a plain Exception subclass.
+         pass
++
++
++class DriverProxy:
++    """Transparent wrapper around the real Appium/Flutter-Driver session
++    that can be reconnected in place.
++
++    ROOT CAUSE this exists to fix: `utils.adb_helpers.force_stop_app()` /
++    `relaunch_app()` kill and restart the app process directly via
++    `adb shell`, completely outside Appium's own app-lifecycle commands.
++    That's necessary because this engine combo doesn't support
++    `driver.background_app()` (see adb_helpers module docstring) — but it
++    means every such restart hands the app a brand-new Dart isolate that
++    the *existing* Flutter-Driver session was never told about. The
++    session's `appium:flutterServerLaunchTimeout` capability only waits
++    for a live isolate once, at initial session creation — it does not
++    re-run on a later adb-triggered relaunch. Every `flutter:*` command
++    sent afterwards (waitFor/click/enterText/getText) is talking to a
++    process that no longer exists, so it fails or times out. Since the
++    `driver` fixture is session-scoped (one connection for the whole
++    shard) and nearly every test resets app state this way, this is why
++    the suite fails almost universally rather than test-by-test.
++
++    Fix: after any raw-adb force-stop/relaunch, call `.reconnect()` to
++    quit the stale session and open a fresh one — reusing the same
++    session-creation path (`new_driver()`) that already correctly waits
++    for a live isolate before returning.
++    """
++
++    def __init__(self, driver):
++        self._driver = driver
++
++    def reconnect(self):
++        """Quit the (likely already-dead) session and open a fresh one
++        against whatever app process is currently running. Call this
++        immediately after any `adb_helpers.force_stop_app()` /
++        `relaunch_app()` / `clear_app_data()` + relaunch sequence."""
++        quit_driver(self._driver)
++        self._driver = new_driver()
++        return self._driver
++
++    def __getattr__(self, name):
++        # Forward everything (execute_script, get_screenshot_as_file,
++        # command_executor, ...) to whichever real driver is current.
++        return getattr(self._driver, name)
+diff --git a/mobile-tests/pytest.ini b/mobile-tests/pytest.ini
+index 501b1b5..e6e6824 100644
+--- a/mobile-tests/pytest.ini
++++ b/mobile-tests/pytest.ini
+@@ -2,3 +2,11 @@
+ markers =
+     smoke: minimal fast-path sanity checks, safe to run on every push
+ testpaths = tests
++# Hard per-test ceiling. Observed healthy tests run 6-50s; 90s gives
++# headroom without letting one stuck test/fixture burn the shard's
++# 120-minute CI budget. Uses the default "signal" method (main-thread
++# only, which is how pytest runs) — base_page.capture_failure() already
++# disarms any pending alarm in a finally block so a timeout firing mid
++# failure-capture can't crash the shard.
++timeout = 90
++timeout_method = signal
+diff --git a/mobile-tests/requirements.txt b/mobile-tests/requirements.txt
+index e3d16df..400edbc 100644
+--- a/mobile-tests/requirements.txt
++++ b/mobile-tests/requirements.txt
+@@ -2,4 +2,5 @@ Appium-Python-Client==3.1.1
+ appium-flutter-finder>=0.1.0,<0.9
+ pytest>=8.0.0,<9
+ pytest-rerunfailures>=14.0,<15
++pytest-timeout>=2.3,<3
+ openpyxl>=3.1.2,<4
+diff --git a/mobile-tests/scripts/ci_run_shard.sh b/mobile-tests/scripts/ci_run_shard.sh
+index 2f8fb43..65982c6 100644
+--- a/mobile-tests/scripts/ci_run_shard.sh
++++ b/mobile-tests/scripts/ci_run_shard.sh
+@@ -40,6 +40,17 @@ cd mobile-tests
+ export APK_PATH="$(pwd)/apk/app-debug.apk"
+ export DEVICE_NAME="emulator-5554"
+ 
++# Record the full set of test IDs this shard is SUPPOSED to run, before
++# executing anything. If the job gets killed partway through (e.g. the
++# 120-minute cap), raw-results.jsonl only contains whatever finished --
++# there's otherwise no record that the rest never ran at all. Diffing
++# this list against raw-results.jsonl at merge time is how
++# generate_reports.py reports genuinely-never-executed tests instead of
++# them just silently vanishing from the totals.
++mkdir -p reports
++python -m pytest "${TEST_FILES[@]}" --collect-only -q -p no:cacheprovider \
++  | grep '::' > "reports/collected-shard-${SHARD_NUM}.txt" || true
++
+ echo "== Shard ${SHARD_NUM}: running pytest on: ${TEST_FILES[*]} =="
+ set +e
+ python -m pytest "${TEST_FILES[@]}" \
+diff --git a/mobile-tests/scripts/generate_reports.py b/mobile-tests/scripts/generate_reports.py
+index ee35f7f..98bfd7c 100644
+--- a/mobile-tests/scripts/generate_reports.py
++++ b/mobile-tests/scripts/generate_reports.py
+@@ -43,17 +43,53 @@ RAW_RESULTS_PATH = os.path.join(config.REPORTS_DIR, "raw-results.jsonl")
+ EXECUTION_RESULTS_PATH = os.path.join(config.REPORTS_DIR, "execution-results.json")
+ 
+ 
+-def load_results():
++def load_raw_rows():
++    """Every attempt (original + reruns from `--reruns 1`), unmodified."""
+     if not os.path.exists(RAW_RESULTS_PATH):
+         return []
+-    results = []
++    rows = []
+     with open(RAW_RESULTS_PATH, encoding="utf-8") as fh:
+         for line in fh:
+             line = line.strip()
+             if not line:
+                 continue
+-            results.append(json.loads(line))
+-    return results
++            rows.append(json.loads(line))
++    return rows
++
++
++def dedupe_to_final_attempt(raw_rows):
++    """Collapse repeated rows for the same test_id (pytest-rerunfailures
++    logs the original attempt AND every rerun as separate rows) down to
++    ONE result per test -- the last attempt, since that's what pytest
++    itself treats as the test's real outcome. Also tags each kept row
++    with `attempts` so a test that failed then passed on rerun is still
++    visible as flaky rather than silently looking clean.
++
++    Without this step, a run with 450 unique tests where ~410 failed at
++    least once produces ~800+ raw rows, and both the total test count
++    and the pass/fail split get double-counted in the summary/xlsx (a
++    test can land in both the Passed and Failed sheets: once per
++    attempt).
++    """
++    order = {}
++    by_test = {}
++    for i, r in enumerate(raw_rows):
++        tid = r["test_id"]
++        order.setdefault(tid, i)
++        by_test.setdefault(tid, []).append(r)
++
++    final = []
++    for tid, attempts in by_test.items():
++        last = dict(attempts[-1])
++        last["attempts"] = len(attempts)
++        last["flaky"] = len(attempts) > 1 and last["status"] == "passed"
++        final.append(last)
++    final.sort(key=lambda r: order[r["test_id"]])
++    return final
++
++
++def load_results():
++    return dedupe_to_final_attempt(load_raw_rows())
+ 
+ 
+ def write_execution_results_json(results, summary, run_at):
+@@ -69,19 +105,40 @@ def write_execution_results_json(results, summary, run_at):
+         json.dump(payload, fh, indent=2)
+ 
+ 
+-def summarize(results):
++def load_collected_ids():
++    """Test IDs pytest --collect-only saw before the run started (written
++    per-shard by ci_run_shard.sh, merged by the CI workflow into
++    collected-all.txt). Empty list if that file isn't present (e.g. a
++    local/manual run), in which case never-executed detection is simply
++    skipped rather than false-alarming."""
++    path = os.path.join(config.REPORTS_DIR, "collected-all.txt")
++    if not os.path.exists(path):
++        return []
++    with open(path, encoding="utf-8") as fh:
++        return [line.strip() for line in fh if line.strip()]
++
++
++def summarize(results, collected_ids=None):
+     counts = Counter(r["status"] for r in results)
+-    total = len(results)
++    total = len(results)  # unique tests with at least one recorded attempt
+     passed = counts.get("passed", 0)
+     failed = counts.get("failed", 0)
+     skipped = counts.get("skipped", 0)
+     executed = passed + failed
+     pass_rate = round((passed / executed) * 100, 2) if executed else 0.0
+     total_duration = round(sum(r.get("duration_s", 0.0) for r in results), 3)
++    total_attempts = sum(r.get("attempts", 1) for r in results)
++    flaky = sum(1 for r in results if r.get("flaky"))
+     by_module = {}
+     for r in results:
+         mod = r.get("module", "unknown")
+         by_module.setdefault(mod, Counter())[r["status"]] += 1
++
++    never_executed = []
++    if collected_ids:
++        seen = {r["test_id"] for r in results}
++        never_executed = sorted(tid for tid in collected_ids if tid not in seen)
++
+     return {
+         "total": total,
+         "passed": passed,
+@@ -89,6 +146,11 @@ def summarize(results):
+         "skipped": skipped,
+         "pass_rate": pass_rate,
+         "total_duration_s": total_duration,
++        "total_attempts": total_attempts,  # rows in raw-results.jsonl, incl. reruns
++        "flaky": flaky,  # failed at least once but passed on a rerun
++        "collected": len(collected_ids) if collected_ids else None,
++        "never_executed": len(never_executed),
++        "never_executed_ids": never_executed,
+         "by_module": {k: dict(v) for k, v in by_module.items()},
+     }
+ 
+@@ -166,15 +228,19 @@ def write_xlsx(results, summary, out_path, run_at=None):
+         ("Run At", run_at or datetime.now(timezone.utc).isoformat()),
+         ("App Package", config.APP_PACKAGE),
+         ("Device", config.DEVICE_NAME),
+-        ("Total Tests", summary["total"]),
++        ("Total Tests (unique)", summary["total"]),
+         ("Passed", summary["passed"]),
+         ("Failed", summary["failed"]),
+         ("Skipped", summary["skipped"]),
++        ("Flaky (failed then passed on rerun)", summary["flaky"]),
+         ("Pass Rate (%)", summary["pass_rate"]),
+         ("Total Duration (s)", summary["total_duration_s"]),
++        ("Total Attempts (incl. reruns)", summary["total_attempts"]),
++        ("Collected (expected)", summary["collected"] if summary["collected"] is not None else "n/a"),
++        ("Never Executed", summary["never_executed"]),
+     ]:
+         metrics.append([metric, value])
+-    metrics.column_dimensions["A"].width = 22
++    metrics.column_dimensions["A"].width = 30
+     metrics.column_dimensions["B"].width = 49
+ 
+     defects = wb.create_sheet("Defect Summary")
+@@ -191,6 +257,14 @@ def write_xlsx(results, summary, out_path, run_at=None):
+     defects.column_dimensions["C"].width = 30
+     defects.column_dimensions["D"].width = 12
+ 
++    if summary.get("never_executed_ids"):
++        never = wb.create_sheet("Never Executed")
++        _make_header(never, ["#", "Test ID"], _HDR_SKIPPED)
++        for seq, tid in enumerate(summary["never_executed_ids"], start=1):
++            never.append([seq, _test_id(tid)])
++        never.column_dimensions["A"].width = 6
++        never.column_dimensions["B"].width = 60
++
+     wb.save(out_path)
+     print(f"Wrote {out_path}")
+ 
+@@ -199,12 +273,22 @@ def write_summary_md(summary, out_path):
+     lines = [
+         "# NutriScan AI — Android E2E Test Summary",
+         "",
+-        f"- **Total executed:** {summary['passed'] + summary['failed']}",
++        f"- **Total executed (unique tests):** {summary['passed'] + summary['failed']}",
+         f"- **Passed:** {summary['passed']}",
+         f"- **Failed:** {summary['failed']}",
+         f"- **Skipped:** {summary['skipped']}",
++        f"- **Flaky (failed once, passed on rerun):** {summary['flaky']}",
+         f"- **Pass rate:** {summary['pass_rate']}% (threshold: {config.PASS_RATE_THRESHOLD}%)",
+         f"- **Total duration:** {summary['total_duration_s']}s",
++        f"- **Total attempts recorded (incl. reruns):** {summary['total_attempts']}",
++    ]
++    if summary.get("collected") is not None:
++        lines.append(
++            f"- **Collected (expected):** {summary['collected']} — "
++            f"**Never executed:** {summary['never_executed']}"
++            + (" ⚠️ some tests did not run (likely a timeout mid-shard)" if summary['never_executed'] else "")
++        )
++    lines += [
+         "",
+         "## By module",
+         "",
+@@ -213,6 +297,9 @@ def write_summary_md(summary, out_path):
+     ]
+     for mod, counts in sorted(summary["by_module"].items()):
+         lines.append(f"| `{mod}` | {counts.get('passed', 0)} | {counts.get('failed', 0)} | {counts.get('skipped', 0)} |")
++    if summary.get("never_executed_ids"):
++        lines += ["", "## Never executed", ""]
++        lines += [f"- `{tid}`" for tid in summary["never_executed_ids"]]
+     with open(out_path, "w", encoding="utf-8") as fh:
+         fh.write("\n".join(lines) + "\n")
+ 
+@@ -221,11 +308,13 @@ def main():
+     os.makedirs(config.REPORTS_DIR, exist_ok=True)
+     results = load_results()
+     if not results:
+-        print(f"WARNING: no results found at {RESULTS_PATH} — did pytest run?", file=sys.stderr)
++        print(f"WARNING: no results found at {RAW_RESULTS_PATH} — did pytest run?", file=sys.stderr)
++    collected_ids = load_collected_ids()
+     run_at = datetime.now(timezone.utc).isoformat()
+-    summary = summarize(results)
+-    print(f"Total={summary['total']} Passed={summary['passed']} Failed={summary['failed']} "
+-          f"Skipped={summary['skipped']} PassRate={summary['pass_rate']}% Duration={summary['total_duration_s']}s")
++    summary = summarize(results, collected_ids)
++    print(f"Total(unique)={summary['total']} Passed={summary['passed']} Failed={summary['failed']} "
++          f"Skipped={summary['skipped']} PassRate={summary['pass_rate']}% Duration={summary['total_duration_s']}s "
++          f"Attempts={summary['total_attempts']} NeverExecuted={summary['never_executed']}")
+     write_execution_results_json(results, summary, run_at)
+     write_summary_md(summary, os.path.join(config.REPORTS_DIR, "summary.md"))
+     write_xlsx(results, summary, os.path.join(config.REPORTS_DIR, "Automation_Test_Report.xlsx"), run_at=run_at)
+diff --git a/mobile-tests/tests/test_authentication.py b/mobile-tests/tests/test_authentication.py
+index 3fd22a4..b9ac3e5 100644
+--- a/mobile-tests/tests/test_authentication.py
++++ b/mobile-tests/tests/test_authentication.py
+@@ -31,6 +31,7 @@ def test_google_button_visible(auth_page, reset_to_guest_home):
+     """Google sign-in button is present on the auth screen."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     assert auth_page.is_displayed_by_key(auth_page.GOOGLE_BTN)
+ 
+@@ -39,6 +40,7 @@ def test_guest_button_visible(auth_page, reset_to_guest_home):
+     """Continue-as-guest control is present on the auth screen."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     assert auth_page.is_displayed_by_key(auth_page.GUEST_BTN)
+ 
+@@ -47,6 +49,7 @@ def test_email_toggle_reveals_email_field(auth_page):
+     """Tapping 'use email' reveals the email input field."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     assert not auth_page.email_field_visible()
+     auth_page.open_email_input()
+@@ -57,6 +60,7 @@ def test_email_field_accepts_text(auth_page):
+     """Email field accepts typed input."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     auth_page.open_email_input()
+     auth_page.enter_email("student@example.com")
+@@ -67,6 +71,7 @@ def test_send_button_visible_after_email_toggle(auth_page):
+     """Send-link button becomes visible once email entry is open."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     auth_page.open_email_input()
+     assert auth_page.is_displayed_by_key(auth_page.EMAIL_SEND_BTN)
+@@ -76,6 +81,7 @@ def test_guest_login_reaches_home(auth_page, home_page):
+     """Continue as Guest lands on the Home screen."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     auth_page.continue_as_guest()
+     assert home_page.is_loaded()
+@@ -85,6 +91,7 @@ def test_guest_login_shows_bottom_nav(auth_page, main_shell):
+     """Guest session lands inside the main shell (bottom nav present)."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     auth_page.continue_as_guest()
+     assert main_shell.is_visible()
+@@ -94,11 +101,13 @@ def test_guest_session_persists_across_relaunch(auth_page, home_page):
+     """A guest session survives a force-stop + relaunch (not a fresh login each time)."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     auth_page.continue_as_guest()
+     assert home_page.is_loaded()
+     adb_helpers.force_stop_app()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     assert home_page.is_loaded(), "guest session was not restored after relaunch"
+ 
+@@ -115,6 +124,7 @@ def test_fresh_install_shows_auth_screen(auth_page):
+     """A cleared app (fresh install simulation) shows Auth, not Home."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     assert auth_page.is_loaded()
+ 
+@@ -133,6 +143,7 @@ def test_email_field_accepts_various_valid_formats(auth_page, email):
+     """Email field accepts a range of RFC-valid address formats."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     auth_page.open_email_input()
+     auth_page.enter_email(email)
+@@ -156,6 +167,7 @@ def test_email_field_does_not_crash_on_malformed_input(auth_page, bad_email):
+     documents that the field is permissive, not that it validates)."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     auth_page.open_email_input()
+     auth_page.enter_email(bad_email)
+@@ -168,6 +180,7 @@ def test_repeated_guest_login_is_idempotent(auth_page, home_page, attempt):
+     the app in a broken state — checked across 5 independent cold starts."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     auth_page.continue_as_guest()
+     assert home_page.is_loaded()
+@@ -179,6 +192,7 @@ def test_back_button_on_auth_screen_does_not_crash(auth_page):
+     from config import DEVICE_NAME
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     subprocess.run(["adb", "-s", DEVICE_NAME, "shell", "input", "keyevent", "KEYCODE_BACK"], timeout=10)
+     time.sleep(1)
+@@ -189,6 +203,7 @@ def test_email_toggle_is_reversible(auth_page):
+     """Email entry can be opened; the toggle control itself remains visible after opening."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     auth_page.open_email_input()
+     assert auth_page.email_field_visible()
+@@ -199,6 +214,7 @@ def test_google_button_tap_does_not_crash_app(auth_page):
+     native account chooser or a graceful no-op rather than crashing the app."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     auth_page.tap_google()
+     time.sleep(2)
+@@ -215,6 +231,7 @@ def test_guest_login_at_varied_app_warm_up_delays(auth_page, home_page, delay_s)
+     extra time to finish its Firebase.initializeApp() warm-up."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2 + delay_s)
+     auth_page.continue_as_guest()
+     assert home_page.is_loaded()
+@@ -224,11 +241,13 @@ def test_multiple_relaunches_keep_guest_session_stable(auth_page, home_page):
+     """Guest session survives three consecutive force-stop/relaunch cycles."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     auth_page.continue_as_guest()
+     for _ in range(3):
+         adb_helpers.force_stop_app()
+         adb_helpers.relaunch_app()
++        auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+         time.sleep(2)
+     assert home_page.is_loaded()
+ 
+@@ -237,6 +256,7 @@ def test_auth_screen_title_visible(auth_page):
+     """Auth screen shows the app name as its headline."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     assert auth_page.wait_for_text("NutriScan AI", timeout=10)
+ 
+@@ -247,6 +267,7 @@ def test_guest_login_stress_repeated_cold_starts(auth_page, home_page, i):
+     intermittent Firebase Auth / Drift DB init races."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     auth_page.continue_as_guest()
+     assert home_page.is_loaded(), f"cold start #{i} failed to reach Home after guest login"
+diff --git a/mobile-tests/tests/test_authorization.py b/mobile-tests/tests/test_authorization.py
+index dae1c8e..86f84e2 100644
+--- a/mobile-tests/tests/test_authorization.py
++++ b/mobile-tests/tests/test_authorization.py
+@@ -28,6 +28,7 @@ def test_unauthenticated_state_does_not_expose_protected_screen(auth_page, scree
+     redirects to /auth before any protected screen marker becomes visible."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     from config import ROUTE_TEXT_MARKERS
+     assert not auth_page.current_screen_contains(ROUTE_TEXT_MARKERS[screen], timeout=3)
+@@ -37,6 +38,7 @@ def test_signed_out_user_lands_on_auth_screen(auth_page):
+     """A signed-out cold start always resolves to /auth, never a blank/protected screen."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     assert auth_page.is_loaded()
+ 
+@@ -46,6 +48,7 @@ def test_guest_is_treated_as_authenticated_for_routing(auth_page, home_page):
+     if anonymous, Firebase Auth session) — home becomes reachable."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     auth_page.continue_as_guest()
+     assert home_page.is_loaded()
+@@ -86,6 +89,7 @@ def test_auth_guard_holds_across_repeated_signout_signin_cycles(
+     guest-login -> sign-out cycles (catches stale-provider-state regressions)."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     auth_page.continue_as_guest()
+     assert home_page.is_loaded(), f"cycle {cycle}: guard blocked legitimate guest access"
+@@ -106,6 +110,7 @@ def test_killed_process_relaunch_reevaluates_guard_correctly(reset_to_guest_home
+     launch and still reaches Home for a persisted guest session."""
+     adb_helpers.force_stop_app()
+     adb_helpers.relaunch_app()
++    home_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     assert home_page.is_loaded()
+ 
+diff --git a/mobile-tests/tests/test_error_handling.py b/mobile-tests/tests/test_error_handling.py
+index d5beeac..9541985 100644
+--- a/mobile-tests/tests/test_error_handling.py
++++ b/mobile-tests/tests/test_error_handling.py
+@@ -78,6 +78,7 @@ def test_offline_at_app_cold_start_does_not_block_guest_login(auth_page, home_pa
+     adb_helpers.clear_app_data()
+     adb_helpers.set_network_offline()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(3)
+     try:
+         if auth_page.is_loaded():
+diff --git a/mobile-tests/tests/test_forms.py b/mobile-tests/tests/test_forms.py
+index bc2d974..6620173 100644
+--- a/mobile-tests/tests/test_forms.py
++++ b/mobile-tests/tests/test_forms.py
+@@ -104,6 +104,7 @@ def test_auth_email_field_is_single_line(auth_page):
+     import time
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     auth_page.open_email_input()
+     assert auth_page.email_field_visible()
+@@ -117,6 +118,7 @@ def test_auth_email_field_clears_between_cold_starts(auth_page, i):
+     import time
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     auth_page.open_email_input()
+     auth_page.enter_email(f"iteration{i}@example.com")
+diff --git a/mobile-tests/tests/test_home_dashboard.py b/mobile-tests/tests/test_home_dashboard.py
+index b0bdc59..4facb61 100644
+--- a/mobile-tests/tests/test_home_dashboard.py
++++ b/mobile-tests/tests/test_home_dashboard.py
+@@ -37,6 +37,7 @@ def test_home_reloads_consistently_across_relaunches(reset_to_guest_home, home_p
+     import time
+     adb_helpers.force_stop_app()
+     adb_helpers.relaunch_app()
++    home_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     assert home_page.is_loaded(), f"relaunch {i} did not reach Home"
+     assert home_page.scan_card_visible(), f"relaunch {i} lost the hero scan card"
+diff --git a/mobile-tests/tests/test_input_validation.py b/mobile-tests/tests/test_input_validation.py
+index c91070b..1256ba6 100644
+--- a/mobile-tests/tests/test_input_validation.py
++++ b/mobile-tests/tests/test_input_validation.py
+@@ -99,6 +99,7 @@ def test_auth_email_field_boundary_inputs(auth_page, value):
+     without the app crashing or the field disappearing."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     auth_page.open_email_input()
+     auth_page.enter_email(value)
+diff --git a/mobile-tests/tests/test_offline_handling.py b/mobile-tests/tests/test_offline_handling.py
+index 91009a3..6a591b4 100644
+--- a/mobile-tests/tests/test_offline_handling.py
++++ b/mobile-tests/tests/test_offline_handling.py
+@@ -78,6 +78,7 @@ def test_guest_login_works_fully_offline(auth_page, home_page):
+     adb_helpers.clear_app_data()
+     adb_helpers.set_network_offline()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(3)
+     try:
+         if auth_page.is_loaded():
+diff --git a/mobile-tests/tests/test_profile_management.py b/mobile-tests/tests/test_profile_management.py
+index d249d57..e76f8cb 100644
+--- a/mobile-tests/tests/test_profile_management.py
++++ b/mobile-tests/tests/test_profile_management.py
+@@ -94,6 +94,7 @@ def test_profile_changes_persist_across_app_relaunch(reset_to_guest_home, main_s
+     profile_page.save()
+     adb_helpers.force_stop_app()
+     adb_helpers.relaunch_app()
++    main_shell.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     main_shell.go_profile()
+     assert profile_page.chip_visible("allergies", "Sesame")
+diff --git a/mobile-tests/tests/test_scan_history_crud.py b/mobile-tests/tests/test_scan_history_crud.py
+index 5a146eb..1c294a4 100644
+--- a/mobile-tests/tests/test_scan_history_crud.py
++++ b/mobile-tests/tests/test_scan_history_crud.py
+@@ -29,6 +29,7 @@ def test_empty_history_shows_empty_state(main_shell, history_page):
+     """A freshly cleared account shows the empty-history state, not a blank screen."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    main_shell.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     from pages.auth_page import AuthPage
+     auth = AuthPage(main_shell.driver)
+@@ -44,6 +45,7 @@ def test_empty_state_is_stable_across_repeated_visits(reset_to_guest_home, main_
+     the History tab (no flicker into a broken loading state)."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    main_shell.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     from pages.auth_page import AuthPage
+     auth = AuthPage(main_shell.driver)
+@@ -67,6 +69,7 @@ def test_history_survives_relaunch_with_no_data(main_shell, history_page):
+     relaunch on a fresh account with zero scans."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    main_shell.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     from pages.auth_page import AuthPage
+     auth = AuthPage(main_shell.driver)
+@@ -74,6 +77,7 @@ def test_history_survives_relaunch_with_no_data(main_shell, history_page):
+         auth.continue_as_guest()
+     adb_helpers.force_stop_app()
+     adb_helpers.relaunch_app()
++    main_shell.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     main_shell.go_history()
+     assert history_page.is_empty_state_visible() or history_page.is_list_visible()
+@@ -96,6 +100,7 @@ def test_history_data_isolated_per_clean_account(main_shell, history_page):
+     proving history data is not baked into the APK / falsely cached."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    main_shell.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     from pages.auth_page import AuthPage
+     auth = AuthPage(main_shell.driver)
+@@ -118,6 +123,7 @@ def test_history_empty_state_cta_is_functional(reset_to_guest_home, main_shell,
+     """The empty-state 'Scan Now' CTA is a live navigation control, not dead UI."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    main_shell.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     from pages.auth_page import AuthPage
+     auth = AuthPage(main_shell.driver)
+diff --git a/mobile-tests/tests/test_session_management.py b/mobile-tests/tests/test_session_management.py
+index 5dedd1a..942dab2 100644
+--- a/mobile-tests/tests/test_session_management.py
++++ b/mobile-tests/tests/test_session_management.py
+@@ -24,6 +24,7 @@ def test_session_persists_across_process_kill(reset_to_guest_home, home_page):
+     session, since Firebase Auth persists its token to disk."""
+     adb_helpers.force_stop_app()
+     adb_helpers.relaunch_app()
++    home_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     assert home_page.is_loaded()
+ 
+@@ -33,6 +34,7 @@ def test_session_cleared_by_app_data_wipe(main_shell, auth_page):
+     (used deliberately by many other tests as a clean-slate fixture)."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    auth_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     assert auth_page.is_loaded()
+ 
+@@ -58,6 +60,7 @@ def test_session_stable_across_repeated_kill_relaunch_cycles(reset_to_guest_home
+     silently dropping back to the auth screen."""
+     adb_helpers.force_stop_app()
+     adb_helpers.relaunch_app()
++    home_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     assert home_page.is_loaded(), f"cycle {cycle}: session was lost on relaunch"
+ 
+@@ -70,6 +73,7 @@ def test_new_session_starts_clean_after_data_wipe_and_new_guest_login(
+     on-device data."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    home_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     if auth_page.is_loaded():
+         auth_page.continue_as_guest()
+@@ -87,6 +91,7 @@ def test_sign_out_then_re_login_as_guest_cycles_cleanly(
+     previous login affecting the new one."""
+     adb_helpers.clear_app_data()
+     adb_helpers.relaunch_app()
++    home_page.driver.reconnect()  # re-sync Flutter-Driver session with the just-relaunched isolate
+     time.sleep(2)
+     auth_page.continue_as_guest()
+     assert home_page.is_loaded(), f"cycle {i}: guest login failed"
