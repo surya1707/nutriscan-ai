@@ -88,7 +88,7 @@ GOALS = [
 # "which screen am I on" is answered by matching a unique visible string.
 ROUTE_TEXT_MARKERS = {
     "auth": "NutriScan AI",
-    "home": "Eat with",
+    "home": "Eat with\nintelligence.",
     "history": "Scan history",
     "profile": "Health Profile",
     "scanner": "NutriScan",

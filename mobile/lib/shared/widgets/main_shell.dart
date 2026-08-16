@@ -38,17 +38,17 @@ class MainShell extends StatelessWidget {
           items: [
             BottomNavigationBarItem(
               icon: _NavIcon(key: const ValueKey('nav_home'), icon: Icons.eco_outlined, active: index == 0),
-              activeIcon: _NavIcon(icon: Icons.eco, active: true),
+              activeIcon: _NavIcon(key: const ValueKey('nav_home'), icon: Icons.eco, active: true),
               label: 'Home',
             ),
             BottomNavigationBarItem(
               icon: _NavIcon(key: const ValueKey('nav_history'), icon: Icons.history_outlined, active: index == 1),
-              activeIcon: _NavIcon(icon: Icons.history, active: true),
+              activeIcon: _NavIcon(key: const ValueKey('nav_history'), icon: Icons.history, active: true),
               label: 'History',
             ),
             BottomNavigationBarItem(
               icon: _NavIcon(key: const ValueKey('nav_profile'), icon: Icons.person_outline, active: index == 2),
-              activeIcon: _NavIcon(icon: Icons.person, active: true),
+              activeIcon: _NavIcon(key: const ValueKey('nav_profile'), icon: Icons.person, active: true),
               label: 'Profile',
             ),
           ],
