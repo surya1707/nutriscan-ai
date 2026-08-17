@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -44,13 +45,14 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen>
   bool _galleryBusy = false;
   // One-shot hook for gallery barcode capture
   void Function(String)? _onNextBarcode;
+  StreamSubscription<List<AnnotatedBlock>>? _arSub;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _realtimeOcrService.initialize();
-    _realtimeOcrService.arStream.listen((blocks) {
+    _arSub = _realtimeOcrService.arStream.listen((blocks) {
       if (mounted && _arOverlayEnabled) {
         setState(() => _arBlocks = blocks);
       }
@@ -58,7 +60,46 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen>
     _checkPermission();
   }
 
+  // Root cause of the near-100% Android E2E failure rate on Scanner-adjacent
+  // tests: this screen creates a real CameraController + startImageStream
+  // (running ML Kit barcode + OCR/AR inference on every frame) but never
+  // released it. Every entry/exit of this screen leaked a running camera
+  // session, compounding across tests until the emulator's isolate became
+  // unresponsive (flutter:waitFor 500s, "Could not capture image
+  // screenshot"). Releasing everything acquired in initState()/_initScanner()
+  // here fixes that.
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _arSub?.cancel();
+    _stopAndDisposeCamera();
+    _barcodeScanner.close();
+    _realtimeOcrService.dispose();
+    super.dispose();
+  }
 
+  // Fire-and-forget: State.dispose() must be synchronous, but
+  // stopImageStream()/CameraController.dispose() are async. Detaching
+  // _ctrl first guarantees no other callback can touch a controller that's
+  // mid-teardown.
+  void _stopAndDisposeCamera() {
+    final controller = _ctrl;
+    _ctrl = null;
+    if (controller == null) return;
+    () async {
+      try {
+        if (controller.value.isStreamingImages) {
+          await controller.stopImageStream();
+        }
+      } catch (_) {
+        // Controller may already be in a bad/uninitialized state (e.g.
+        // permission revoked mid-stream) - disposal below still needs to run.
+      }
+      try {
+        await controller.dispose();
+      } catch (_) {}
+    }();
+  }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -112,6 +153,11 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen>
 
   void _startCameraStream() {
     _ctrl?.startImageStream((image) {
+      // Guard against frames still in flight from the native camera buffer
+      // right as this screen is being torn down (dispose() sets _ctrl to
+      // null before the controller finishes stopping the stream).
+      if (!mounted || _ctrl == null) return;
+
       final inputImage = _inputImageFromCameraImage(image);
       if (inputImage == null) return;
       
@@ -163,6 +209,10 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen>
     _isProcessingBarcode = true;
     try {
       final barcodes = await _barcodeScanner.processImage(image);
+      // The screen may have been popped while this frame was mid-flight
+      // through ML Kit (it's async) - _barcodeScanner may already be
+      // closed and `ref` is no longer safe to use once unmounted.
+      if (!mounted) return;
       if (barcodes.isNotEmpty) {
         final barcode = barcodes.first.rawValue;
         if (barcode != null && barcode.isNotEmpty) {
