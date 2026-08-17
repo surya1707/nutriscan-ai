@@ -33,7 +33,13 @@ permissions:
 
 concurrency:
   group: android-e2e-${{ github.ref }}
-  cancel-in-progress: true
+  # KrishiIQ (the working reference project) uses false here. With true,
+  # pushing a new commit mid-run kills every in-flight shard instantly —
+  # a real risk given how often this workflow gets re-pushed while
+  # iterating on fixes. Shards have also been landing within ~5-10min of
+  # the 120min job cap on their own; losing a near-complete run to a
+  # stray push on top of that is worth avoiding.
+  cancel-in-progress: false
 
 env:
   PASS_RATE_THRESHOLD: ${{ github.event.inputs.pass_rate_threshold || '95' }}
@@ -192,6 +198,15 @@ jobs:
       - name: Generate consolidated Automation_Test_Report.xlsx
         working-directory: mobile-tests
         run: python scripts/generate_reports.py
+
+      - name: Write job summary
+        if: always()
+        run: |
+          if [ -f mobile-tests/reports/summary.md ]; then
+            cat mobile-tests/reports/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No summary.md was generated — see uploaded artifacts / logs." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Enforce pass-rate gate
         working-directory: mobile-tests

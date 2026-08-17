@@ -110,7 +110,18 @@ class BasePage:
 
     # ── Screen identity (no page_source, see module docstring) ────────
     def current_screen_contains(self, marker_text: str, timeout: int = None) -> bool:
-        return self.wait_for_text(marker_text, timeout or config.SHORT_TIMEOUT)
+        # Default changed from SHORT_TIMEOUT (5s) to DEFAULT_TIMEOUT (15s).
+        # SHORT_TIMEOUT is correctly used by the handful of tests that pass
+        # it explicitly for fast-fail negative checks ("this error text is
+        # NOT present") — those all pass their own `timeout=` already, so
+        # they're unaffected. But every is_loaded() across every page
+        # object relies on THIS unqualified default for full screen-
+        # transition checks, and 5s was consistently too tight for
+        # transitions on this CI emulator (in-app navigation into Scanner,
+        # cold relaunch, etc.) — confirmed against raw CI logs showing
+        # is_loaded() checks exhausting a 5s window with repeated 500s
+        # right up to the deadline, not intermittent flakiness.
+        return self.wait_for_text(marker_text, timeout or config.DEFAULT_TIMEOUT)
 
     def is_on_screen(self, screen_name: str, timeout: int = None) -> bool:
         marker = config.ROUTE_TEXT_MARKERS[screen_name]

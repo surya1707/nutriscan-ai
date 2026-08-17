@@ -63,8 +63,25 @@ set -e
 echo "== Shard ${SHARD_NUM}: stopping Appium (pid ${APPIUM_PID}) =="
 kill "${APPIUM_PID}" 2>/dev/null || true
 
-# Exit non-zero if pytest failed, but only AFTER Appium is torn down and
-# results are written to disk — the report-generation/upload steps that
-# follow run regardless (they're gated on `if: always()`, not on this
-# script's exit code).
+# The shard job's pass/fail status in the GitHub Actions UI should reflect
+# whether the shard *ran to completion*, not whether every individual test
+# passed — that's a separate concern already enforced by
+# check_pass_rate.py's threshold gate in the merge-reports job. Without
+# this, every shard with even one failing test (i.e. basically every run)
+# shows as a red X job, which is misleading at a glance and makes a
+# genuinely-broken shard (crashed emulator, Appium never started, pytest
+# itself erroring) indistinguishable from one that simply found bugs.
+#
+# pytest exit codes: 0 = all passed, 1 = some tests failed (still a normal,
+# completed run) — both are "shard completed" as far as this job's status
+# goes. 2 = usage error, 3 = internal/collection error, 4 = usage error,
+# 5 = no tests collected — these mean something actually broke and should
+# still fail the job.
+echo "== Shard ${SHARD_NUM}: pytest exit code was ${PYTEST_EXIT} =="
+if [ "${PYTEST_EXIT}" -eq 0 ] || [ "${PYTEST_EXIT}" -eq 1 ]; then
+  echo "== Shard ${SHARD_NUM}: completed (pass/fail counts are in the report, not this job's status) =="
+  exit 0
+fi
+
+echo "== Shard ${SHARD_NUM}: pytest exited abnormally (${PYTEST_EXIT}), not just test failures — failing the job =="
 exit "${PYTEST_EXIT}"

@@ -50,6 +50,17 @@ def driver():
     # process's Dart isolate, instead of silently continuing to talk to
     # a killed one. See DriverProxy's docstring in driver_wrapper.py.
     proxy = DriverProxy(new_driver())
+    # Belt-and-suspenders alongside the `appium:autoGrantPermissions`
+    # capability in driver_wrapper.py: the previous CI run showed
+    # test_camera_file_upload.py still failing 0/25 and most of
+    # test_inapp_messaging.py still failing after that capability was
+    # added, with counts essentially unchanged from before the fix — so
+    # either the patch didn't land as expected, or the capability isn't
+    # being honored end-to-end through appium-flutter-driver's UiAutomator2
+    # passthrough. Rather than debug that capability further, grant the
+    # permission directly via adb, which is the exact mechanism the two
+    # explicit-permission tests already rely on and is proven to work.
+    adb_helpers.grant_camera_permission()
     yield proxy
     quit_driver(proxy._driver)
 
@@ -96,6 +107,12 @@ def reset_to_guest_home(driver, auth_page, home_page):
     (Auth screen vs. already-persisted guest session) the app is in."""
     adb_helpers.force_stop_app()
     adb_helpers.relaunch_app()
+    # Re-grant in case a prior test in this shard called clear_app_data()
+    # (pm clear resets all runtime permission grants, camera included).
+    # Idempotent/cheap when already granted, so safe to run unconditionally
+    # before every test rather than trying to track which earlier test
+    # might have cleared data.
+    adb_helpers.grant_camera_permission()
     time.sleep(2)
     # The relaunch above just handed the app a brand-new Dart isolate.
     # The existing Flutter-Driver session (created once for the whole
