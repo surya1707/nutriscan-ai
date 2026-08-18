@@ -45,20 +45,40 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 
   Future<void> _save(UserProfile profile) async {
     setState(() => _saving = true);
-    final updated = profile.copyWith(displayName: _nameController.text.trim());
-    await ref.read(userProfileProvider.notifier).save(updated);
-    setState(() => _saving = false);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Profile saved ✓'),
-          backgroundColor: AppColors.safeGreen,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-      );
+    try {
+      final updated = profile.copyWith(displayName: _nameController.text.trim());
+      await ref.read(userProfileProvider.notifier).save(updated);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Profile saved ✓'),
+            backgroundColor: AppColors.safeGreen,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
+    } catch (e) {
+      // The notifier already catches and logs DB/network errors, so this
+      // branch is a last-resort guard. Show a user-facing error rather than
+      // silently leaving _saving stuck true.
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Save failed — please try again'),
+            backgroundColor: AppColors.flaggedRed,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
+    } finally {
+      // Unconditionally reset _saving so the button is never permanently
+      // disabled due to an unhandled exception path.
+      if (mounted) setState(() => _saving = false);
     }
   }
+
 
   @override
   Widget build(BuildContext context) {

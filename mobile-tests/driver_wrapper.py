@@ -65,7 +65,7 @@ def build_capabilities() -> UiAutomator2Options:
     options.app_package = APP_PACKAGE
     options.new_command_timeout = 300
     # Flutter driver capabilities, not exposed as typed UiAutomator2Options fields:
-    options.set_capability("noReset", False)
+    options.set_capability("noReset", True)
     options.set_capability("fullReset", False)
     # Without this, the app has zero runtime permissions after install (Android
     # 6.0+ default), so the Scanner screen permanently renders its

@@ -115,6 +115,26 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen>
   // ── Permission ────────────────────────────────────────────────────────────────
 
   Future<void> _checkPermission() async {
+    // Check current status first (non-blocking). Only call the potentially-
+    // blocking request() when the permission is not already granted.
+    // Calling request() on an already-granted permission can stall the Dart
+    // main-isolate event loop on some Android/permission_handler versions —
+    // especially when the permission was externally toggled via adb pm revoke
+    // and the plugin's internal bookkeeping is out of sync with reality.
+    // This was the root cause of flutter:waitFor 'NutriScan' timing out:
+    // the hang inside request() prevented the very first build() frame from
+    // being rendered, so the text widget never appeared within the 15s window.
+    final currentStatus = await Permission.camera.status;
+    if (currentStatus == PermissionStatus.granted) {
+      if (!mounted) return;
+      setState(() {
+        _permissionGranted = true;
+        _checkingPermission = false;
+      });
+      _initScanner();
+      return;
+    }
+    // Not yet granted — go through the normal request() flow.
     final status = await Permission.camera.request();
     final granted = status == PermissionStatus.granted;
     if (!mounted) return;
@@ -141,7 +161,18 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen>
         imageFormatGroup: Platform.isAndroid ? ImageFormatGroup.nv21 : ImageFormatGroup.bgra8888,
       );
       
-      await controller.initialize();
+      // Timeout guard: on CI emulators the -camera-back emulated backend can
+      // stall indefinitely inside initialize(). A 10s ceiling ensures we
+      // resolve to the camera-unavailable fallback rather than hanging the
+      // Dart main isolate and blocking all subsequent flutter:waitFor calls.
+      await controller.initialize().timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          debugPrint('Camera initialize() timed out after 10s — using fallback UI');
+          controller.dispose().ignore();
+          throw TimeoutException('Camera initialize() timed out', const Duration(seconds: 10));
+        },
+      );
       if (!mounted) return;
       
       setState(() => _ctrl = controller);
