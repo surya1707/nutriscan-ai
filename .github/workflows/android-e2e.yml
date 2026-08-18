@@ -96,20 +96,32 @@ jobs:
   android-e2e:
     needs: build-apk
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # Was 120. Shard 3 (5 modules incl. the heaviest/flakiest: camera,
+    # offline, session, error, messaging) provably ran out of time and
+    # left 26 tests "never executed"; shard 2 disappeared entirely mid-run
+    # with zero results uploaded. This workflow's own prior comment
+    # already admitted shards were landing within 5-10min of the 120min
+    # cap "on their own" — i.e. already living on the edge before any bad
+    # luck. Raised to 180 for headroom, combined with the shard rebalance
+    # below (was 4/4/5/3 modules, now an even 4/4/4/4 with the
+    # heavy/flaky modules spread across different shards instead of
+    # stacked in one) and the continue_as_guest() text-match fix in
+    # pages/auth_page.py (was silently burning ~15s per test on every
+    # single guest login across nearly the whole suite).
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
         include:
           - shard: 1
-            files: "tests/test_authentication.py tests/test_authorization.py tests/test_navigation.py tests/test_home_dashboard.py"
+            files: "tests/test_authentication.py tests/test_home_dashboard.py tests/test_responsive_ui.py tests/test_offline_handling.py"
           - shard: 2
-            files: "tests/test_forms.py tests/test_input_validation.py tests/test_scan_history_crud.py tests/test_list_browsing_and_filters.py"
+            files: "tests/test_authorization.py tests/test_navigation.py tests/test_accessibility.py tests/test_list_browsing_and_filters.py"
           - shard: 3
-            files: "tests/test_error_handling.py tests/test_session_management.py tests/test_inapp_messaging.py tests/test_camera_file_upload.py tests/test_offline_handling.py"
+            files: "tests/test_forms.py tests/test_scan_history_crud.py tests/test_input_validation.py tests/test_inapp_messaging.py"
           - shard: 4
-            files: "tests/test_accessibility.py tests/test_responsive_ui.py tests/test_profile_management.py"
+            files: "tests/test_camera_file_upload.py tests/test_error_handling.py tests/test_profile_management.py tests/test_session_management.py"
 
     steps:
       - uses: actions/checkout@v4
@@ -157,13 +169,30 @@ jobs:
             mobile-tests/reports/raw-results.jsonl
             mobile-tests/reports/collected-shard-${{ matrix.shard }}.txt
           retention-days: 14
-          if-no-files-found: warn
+          # Was 'warn'. A shard that produces literally nothing (e.g. it
+          # died badly enough mid-run that ci_run_shard.sh's own report
+          # files never got written) used to just log a warning and
+          # vanish from the merged report - the exact failure mode that
+          # made "300 tests instead of ~400" look like a reporting bug
+          # instead of what it was: shard 2 silently contributing zero
+          # results. Now it fails this job's upload step loudly instead.
+          if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: screenshots-shard-${{ matrix.shard }}
-          path: mobile-tests/reports/screenshots
+          name: failure-evidence-shard-${{ matrix.shard }}
+          # capture_failure() in pages/base_page.py writes BOTH a
+          # screenshot and a logcat dump per failed test, but only the
+          # screenshots dir was ever uploaded — the logcat files (often
+          # more useful than a screenshot for a driver-connection-death
+          # failure, since they show what the app/OS was doing at the
+          # moment of failure) were silently discarded at the end of
+          # every run. Uploading both dirs together as one artifact so
+          # a failed module's evidence is in one place.
+          path: |
+            mobile-tests/reports/screenshots
+            mobile-tests/reports/logs
           retention-days: 14
           if-no-files-found: ignore
 
@@ -195,6 +224,60 @@ jobs:
           find mobile-tests/reports/_shards -name 'collected-shard-*.txt' -exec cat {} + \
             > mobile-tests/reports/collected-all.txt || true
 
+      - name: Verify all 4 shards reported in
+        run: |
+          FOUND=$(find mobile-tests/reports/_shards -maxdepth 1 -type d -name 'raw-results-shard-*' | wc -l)
+          echo "Shards with a results artifact: ${FOUND} / 4"
+          if [ "${FOUND}" -lt 4 ]; then
+            echo "::warning::Only ${FOUND}/4 shards uploaded results — the totals below are undercounted, not a report bug. Check the android-e2e job list for a red/missing shard."
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: failure-evidence-shard-*
+          path: mobile-tests/reports/_failure_evidence
+          merge-multiple: false
+        continue-on-error: true  # ignore() upstream means this can legitimately not exist
+
+      - name: Consolidate failure evidence + summarize per module
+        run: |
+          mkdir -p mobile-tests/reports/Failure_Evidence
+          if [ -d mobile-tests/reports/_failure_evidence ]; then
+            # Flatten shard-N/screenshots and shard-N/logs into
+            # Failure_Evidence/shard-N/{screenshots,logs} so one artifact
+            # download gives you everything, organized by shard, instead
+            # of having to open 4 separate screenshots-shard-N artifacts.
+            for shard_dir in mobile-tests/reports/_failure_evidence/failure-evidence-shard-*; do
+              [ -d "$shard_dir" ] || continue
+              name=$(basename "$shard_dir")
+              num=${name##*-}
+              mkdir -p "mobile-tests/reports/Failure_Evidence/shard-${num}"
+              cp -r "$shard_dir"/. "mobile-tests/reports/Failure_Evidence/shard-${num}/" 2>/dev/null || true
+            done
+          fi
+
+          {
+            echo ""
+            echo "## Failure evidence"
+            TOTAL_SHOTS=$(find mobile-tests/reports/Failure_Evidence -iname '*.png' 2>/dev/null | wc -l)
+            TOTAL_LOGS=$(find mobile-tests/reports/Failure_Evidence -iname '*.log' 2>/dev/null | wc -l)
+            if [ "${TOTAL_SHOTS}" -eq 0 ] && [ "${TOTAL_LOGS}" -eq 0 ]; then
+              echo "No failure screenshots/logcat were captured for this run."
+            else
+              echo "${TOTAL_SHOTS} screenshot(s) and ${TOTAL_LOGS} logcat file(s) captured — see the \`Failure_Evidence\` artifact."
+              echo ""
+              echo "| Shard | Screenshots | Logcat files |"
+              echo "|---|---|---|"
+              for shard_dir in mobile-tests/reports/Failure_Evidence/shard-*; do
+                [ -d "$shard_dir" ] || continue
+                num=$(basename "$shard_dir" | sed 's/shard-//')
+                shots=$(find "$shard_dir" -iname '*.png' 2>/dev/null | wc -l)
+                logs=$(find "$shard_dir" -iname '*.log' 2>/dev/null | wc -l)
+                echo "| ${num} | ${shots} | ${logs} |"
+              done
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Generate consolidated Automation_Test_Report.xlsx
         working-directory: mobile-tests
         run: python scripts/generate_reports.py
@@ -223,3 +306,11 @@ jobs:
             mobile-tests/reports/execution-results.json
             mobile-tests/reports/summary.md
           retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Failure_Evidence
+          path: mobile-tests/reports/Failure_Evidence
+          retention-days: 30
+          if-no-files-found: ignore
