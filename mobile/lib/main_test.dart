@@ -22,10 +22,20 @@ import 'core/providers/scan_history_provider.dart';
 void main() async {
   enableFlutterDriverExtension();
 
+  // Cold-start timing diagnostics — grep CI logcat for NUTRISCAN_TIMING to
+  // understand which phase owns the ~15 s Dart VM Observatory dead zone seen
+  // after every adb relaunch+reconnect in the E2E suite.
+  // Usage: adb logcat -d | grep NUTRISCAN_TIMING
+  final _t0 = DateTime.now().millisecondsSinceEpoch;
+  debugPrint('[NUTRISCAN_TIMING] main() start: 0 ms');
+
   WidgetsFlutterBinding.ensureInitialized();
+  debugPrint('[NUTRISCAN_TIMING] WidgetsFlutterBinding done: ${DateTime.now().millisecondsSinceEpoch - _t0} ms');
+
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+  debugPrint('[NUTRISCAN_TIMING] Firebase.initializeApp done: ${DateTime.now().millisecondsSinceEpoch - _t0} ms');
 
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   SystemChrome.setSystemUIOverlayStyle(
@@ -35,7 +45,11 @@ void main() async {
     ),
   );
 
+  // AppDatabase() calls openConnection() which wraps NativeDatabase.createInBackground().
+  // The background isolate ("Drift isolate worker for .../nutriscan.db") is spawned
+  // here and may be contributing to Observatory unresponsiveness during the first ~15 s.
   final db = AppDatabase();
+  debugPrint('[NUTRISCAN_TIMING] AppDatabase() constructed (Drift isolate spawned): ${DateTime.now().millisecondsSinceEpoch - _t0} ms');
 
   runApp(
     ProviderScope(
@@ -45,6 +59,7 @@ void main() async {
       child: const _NutriScanTestApp(),
     ),
   );
+  debugPrint('[NUTRISCAN_TIMING] runApp() returned: ${DateTime.now().millisecondsSinceEpoch - _t0} ms');
 }
 
 // Identical widget tree to NutriScanApp in main.dart. Duplicated (rather

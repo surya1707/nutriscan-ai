@@ -53,7 +53,10 @@ class BasePage:
         while time.time() < deadline:
             try:
                 # existence check only — never .text on a generic widget
-                self.driver.execute_script("flutter:waitFor", el_finder, 1000)
+                # 3 000 ms sub-timeout: each call blocks up to 3 s waiting for
+                # the Observatory to respond, cutting round-trips by 3× during
+                # the ~16 s cold-start dead zone vs. the previous 1 000 ms.
+                self.driver.execute_script("flutter:waitFor", el_finder, 3000)
                 return True
             except Exception as e:  # noqa: BLE001 - polling loop, retry until deadline
                 last_err = e
@@ -75,7 +78,7 @@ class BasePage:
         deadline = time.time() + timeout
         while time.time() < deadline:
             try:
-                self.driver.execute_script("flutter:waitFor", el_finder, 1000)
+                self.driver.execute_script("flutter:waitFor", el_finder, 3000)
                 return True
             except Exception:  # noqa: BLE001
                 time.sleep(0.3)

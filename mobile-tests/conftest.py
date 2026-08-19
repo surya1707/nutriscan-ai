@@ -19,6 +19,7 @@ import time
 import pytest
 
 import config
+from appium_flutter_finder.flutter_finder import FlutterFinder
 from driver_wrapper import DriverProxy, new_driver, quit_driver
 from pages.auth_page import AuthPage
 from pages.history_page import HistoryPage
@@ -30,6 +31,42 @@ from pages.scanner_page import ScannerPage
 from utils import adb_helpers
 
 RESULTS_PATH = os.path.join(config.REPORTS_DIR, "raw-results.jsonl")
+
+_OBSERVATORY_PROBE_TIMEOUT = 35  # seconds — safely above the ~16 s dead zone
+
+
+def _wait_for_driver_ready(driver, timeout: int = _OBSERVATORY_PROBE_TIMEOUT) -> None:
+    """Block until the Dart VM Observatory responds to a flutter:waitFor
+    round-trip, or until `timeout` seconds elapse.
+
+    After every adb force-stop + relaunch + driver.reconnect(), there is a
+    ~15-16 s window during which the Observatory is reachable but every
+    flutter:waitFor call returns a timeout error — the Dart VM is alive
+    (session was created) but busy with Impeller GPU init and the Drift
+    background isolate startup. Using a blind time.sleep() here means the
+    dead-zone cost comes straight out of the *test's* timeout budget; using
+    an active poll here means the harness waits exactly as long as needed
+    (no more, no less) before the test starts.
+
+    'NutriScan AI' is the MaterialApp title — it is always present in the
+    Flutter widget tree immediately after cold start, on every screen, so it
+    is safe to use as a liveness probe without caring which screen the app
+    lands on after relaunch.
+    """
+    probe = FlutterFinder().by_text("NutriScan AI")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            # 3 000 ms sub-timeout matches wait_for_key/wait_for_text so
+            # each loop iteration costs at most 3 s + a tiny round-trip
+            # overhead rather than returning immediately on a timeout error.
+            driver.execute_script("flutter:waitFor", probe, 3000)
+            return  # Observatory is live — hand off to the test
+        except Exception:  # noqa: BLE001
+            time.sleep(0.5)
+    # If we reach here the app may be unusually slow to start; don't raise —
+    # let the test's own wait_for_* produce the failure with a specific,
+    # meaningful widget-level message rather than a generic readiness error.
 
 
 def pytest_addoption(parser):
@@ -113,7 +150,9 @@ def reset_to_guest_home(driver, auth_page, home_page):
     # before every test rather than trying to track which earlier test
     # might have cleared data.
     adb_helpers.grant_camera_permission()
-    time.sleep(2)
+    # Short pause so the adb-relaunched process is accepting connections
+    # before we open a new Appium session against it.
+    time.sleep(1)
     # The relaunch above just handed the app a brand-new Dart isolate.
     # The existing Flutter-Driver session (created once for the whole
     # shard) is still wired to the isolate from before this force-stop
@@ -121,6 +160,13 @@ def reset_to_guest_home(driver, auth_page, home_page):
     # reconnect. This is the fix for the near-100% failure rate seen
     # when this reconnect was missing.
     driver.reconnect()
+    # Active Observatory ready-poll: block here until the Dart VM responds
+    # to a flutter:waitFor round-trip. This absorbs the full ~15-16 s
+    # cold-start dead zone (Impeller GPU init + Drift background isolate
+    # startup) before the test starts, so the test's own timeout budget is
+    # never consumed by infrastructure latency. Replaces the previous
+    # blind time.sleep(2) which was too short by an order of magnitude.
+    _wait_for_driver_ready(driver)
     try:
         if auth_page.is_loaded():
             auth_page.continue_as_guest()

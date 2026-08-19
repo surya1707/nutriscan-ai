@@ -54,8 +54,8 @@ PLATFORM_NAME = "Android"
 DEVICE_NAME = os.environ.get("DEVICE_NAME", "emulator-5554")
 
 # ── Waits ────────────────────────────────────────────────────────────────
-DEFAULT_TIMEOUT = int(os.environ.get("APPIUM_TIMEOUT", "15"))
-SHORT_TIMEOUT = int(os.environ.get("APPIUM_SHORT_TIMEOUT", "5"))
+DEFAULT_TIMEOUT = int(os.environ.get("APPIUM_TIMEOUT", "30"))
+SHORT_TIMEOUT = int(os.environ.get("APPIUM_SHORT_TIMEOUT", "20"))
 
 # ── Backend (unused by the current mobile app — kept for forward-compat if
 #    a backend integration is added later; see config note above) ────────
