@@ -108,6 +108,28 @@ jobs:
     # stacked in one) and the continue_as_guest() text-match fix in
     # pages/auth_page.py (was silently burning ~15s per test on every
     # single guest login across nearly the whole suite).
+    #
+    # That first rebalance wasn't enough: shard 4 (camera_file_upload +
+    # error_handling + profile_management + session_management) still
+    # died outright — GitHub killed the runner mid-run ("received a
+    # shutdown signal") after ~40min, and both raw-results and
+    # failure-evidence uploads were skipped entirely (a job-level crash,
+    # not a test failure). The shard-4 log showed a ~90s stall-then-rerun
+    # cycle recurring every ~90s across camera_file_upload AND
+    # error_handling — every test force-stops+relaunches the app
+    # (reset_to_guest_home), and both of those files additionally cycle
+    # the Scanner's CameraController/Impeller GPU context dozens of times
+    # each (flash toggle x8, entry/exit stress x10, camera permission
+    # grant/revoke, repeated-permission-toggle x8) on top of that. The
+    # emulator runs on swiftshader_indirect (software Vulkan) which is
+    # known to leak slowly across repeated context create/destroy; having
+    # BOTH camera-heavy files stacked in one shard concentrated that churn
+    # enough to exhaust the runner. Every other shard has at most one
+    # relaunch-heavy file. Rebalanced so no shard contains more than one
+    # of {test_camera_file_upload.py, test_error_handling.py,
+    # test_session_management.py} — the three files whose tests
+    # individually trigger a force-stop+relaunch (or, for the first two,
+    # a fresh GPU context) most often.
     timeout-minutes: 180
     strategy:
       fail-fast: false
@@ -115,13 +137,13 @@ jobs:
         shard: [1, 2, 3, 4]
         include:
           - shard: 1
-            files: "tests/test_authentication.py tests/test_home_dashboard.py tests/test_responsive_ui.py tests/test_offline_handling.py"
+            files: "tests/test_camera_file_upload.py tests/test_forms.py tests/test_home_dashboard.py tests/test_responsive_ui.py"
           - shard: 2
-            files: "tests/test_authorization.py tests/test_navigation.py tests/test_accessibility.py tests/test_list_browsing_and_filters.py"
+            files: "tests/test_error_handling.py tests/test_input_validation.py tests/test_list_browsing_and_filters.py tests/test_accessibility.py"
           - shard: 3
-            files: "tests/test_forms.py tests/test_scan_history_crud.py tests/test_input_validation.py tests/test_inapp_messaging.py"
+            files: "tests/test_session_management.py tests/test_authentication.py tests/test_authorization.py tests/test_inapp_messaging.py"
           - shard: 4
-            files: "tests/test_camera_file_upload.py tests/test_error_handling.py tests/test_profile_management.py tests/test_session_management.py"
+            files: "tests/test_profile_management.py tests/test_navigation.py tests/test_offline_handling.py tests/test_scan_history_crud.py"
 
     steps:
       - uses: actions/checkout@v4
