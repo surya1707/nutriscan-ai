@@ -7,65 +7,72 @@ class HeroScanCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: AppColors.darkGreen,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      clipBehavior: Clip.hardEdge,
-      child: Stack(
-        children: [
-          // Background texture hint (subtle leaf image placeholder)
-          Positioned(
-            right: -10,
-            bottom: -10,
-            child: Opacity(
-              opacity: 0.15,
-              child: Container(
-                width: 140,
-                height: 140,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: AppColors.mediumGreen,
+    // The whole card is tappable, not just the "Start Scan" pill inside it
+    // — the ValueKey callers attach to this widget (e.g. 'home_scan_card')
+    // resolves to THIS element, and Appium's flutter:clickElement taps its
+    // center. That must be the same element the onTap handler lives on, or
+    // a driver tap here (center of the whole card) lands on inert space
+    // and the nested GestureDetector below never fires.
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: AppColors.darkGreen,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        clipBehavior: Clip.hardEdge,
+        child: Stack(
+          children: [
+            // Background texture hint (subtle leaf image placeholder)
+            Positioned(
+              right: -10,
+              bottom: -10,
+              child: Opacity(
+                opacity: 0.15,
+                child: Container(
+                  width: 140,
+                  height: 140,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: AppColors.mediumGreen,
+                  ),
                 ),
               ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'SCAN INGREDIENTS',
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: Colors.white54,
-                    letterSpacing: 1.2,
+            Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'SCAN INGREDIENTS',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: Colors.white54,
+                          letterSpacing: 1.2,
+                        ),
                   ),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  'Decode what\nyou eat.',
-                  style: Theme.of(context).textTheme.displayLarge?.copyWith(
-                    color: Colors.white,
-                    fontSize: 30,
-                    height: 1.15,
+                  const SizedBox(height: 10),
+                  Text(
+                    'Decode what\nyou eat.',
+                    style: Theme.of(context).textTheme.displayLarge?.copyWith(
+                          color: Colors.white,
+                          fontSize: 30,
+                          height: 1.15,
+                        ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'Point at any label. We translate E-codes,\nclassify NOVA tier, and flag ingredients\nmatched to your profile.',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Colors.white70,
-                    height: 1.55,
+                  const SizedBox(height: 12),
+                  Text(
+                    'Point at any label. We translate E-codes,\nclassify NOVA tier, and flag ingredients\nmatched to your profile.',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Colors.white70,
+                          height: 1.55,
+                        ),
                   ),
-                ),
-                const SizedBox(height: 20),
-                GestureDetector(
-                  onTap: onTap,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  const SizedBox(height: 20),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 12),
                     decoration: BoxDecoration(
                       color: Colors.white.withOpacity(0.15),
                       borderRadius: BorderRadius.circular(30),
@@ -87,12 +94,12 @@ class HeroScanCard extends StatelessWidget {
                       ],
                     ),
                   ),
-                ),
-                const SizedBox(height: 4),
-              ],
+                  const SizedBox(height: 4),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -129,13 +136,33 @@ class _BracketPainter extends CustomPainter {
     final h = size.height;
 
     // Top-left
-    canvas.drawPath(Path()..moveTo(0, corner)..lineTo(0, 0)..lineTo(corner, 0), paint);
+    canvas.drawPath(
+        Path()
+          ..moveTo(0, corner)
+          ..lineTo(0, 0)
+          ..lineTo(corner, 0),
+        paint);
     // Top-right
-    canvas.drawPath(Path()..moveTo(w - corner, 0)..lineTo(w, 0)..lineTo(w, corner), paint);
+    canvas.drawPath(
+        Path()
+          ..moveTo(w - corner, 0)
+          ..lineTo(w, 0)
+          ..lineTo(w, corner),
+        paint);
     // Bottom-left
-    canvas.drawPath(Path()..moveTo(0, h - corner)..lineTo(0, h)..lineTo(corner, h), paint);
+    canvas.drawPath(
+        Path()
+          ..moveTo(0, h - corner)
+          ..lineTo(0, h)
+          ..lineTo(corner, h),
+        paint);
     // Bottom-right
-    canvas.drawPath(Path()..moveTo(w - corner, h)..lineTo(w, h)..lineTo(w, h - corner), paint);
+    canvas.drawPath(
+        Path()
+          ..moveTo(w - corner, h)
+          ..lineTo(w, h)
+          ..lineTo(w, h - corner),
+        paint);
   }
 
   @override

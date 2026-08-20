@@ -35,38 +35,46 @@ RESULTS_PATH = os.path.join(config.REPORTS_DIR, "raw-results.jsonl")
 _OBSERVATORY_PROBE_TIMEOUT = 35  # seconds — safely above the ~16 s dead zone
 
 
-def _wait_for_driver_ready(driver, timeout: int = _OBSERVATORY_PROBE_TIMEOUT) -> None:
-    """Block until the Dart VM Observatory responds to a flutter:waitFor
-    round-trip, or until `timeout` seconds elapse.
+def _wait_for_app_ready(driver, timeout: int = _OBSERVATORY_PROBE_TIMEOUT):
+    """Block until the app renders a known screen marker, and report WHICH
+    screen it landed on ("auth" | "home"), or None if it never got there.
 
     After every adb force-stop + relaunch + driver.reconnect(), there is a
     ~15-16 s window during which the Observatory is reachable but every
     flutter:waitFor call returns a timeout error — the Dart VM is alive
     (session was created) but busy with Impeller GPU init and the Drift
-    background isolate startup. Using a blind time.sleep() here means the
-    dead-zone cost comes straight out of the *test's* timeout budget; using
-    an active poll here means the harness waits exactly as long as needed
-    (no more, no less) before the test starts.
+    background isolate startup. Polling actively here means the harness
+    waits exactly as long as needed before the test starts.
 
-    'NutriScan AI' is the MaterialApp title — it is always present in the
-    Flutter widget tree immediately after cold start, on every screen, so it
-    is safe to use as a liveness probe without caring which screen the app
-    lands on after relaunch.
+    The probe races BOTH possible cold-start screens. A previous version
+    probed only for 'NutriScan AI' on the theory that it is the MaterialApp
+    title and therefore always in the widget tree. It is not:
+    `MaterialApp.title` is engine metadata for the task switcher, never a
+    Text widget, and `find.text()` matches Text widgets only. The one real
+    'NutriScan AI' Text lives on the Auth screen
+    (features/auth/screens/auth_screen.dart) — so on the overwhelmingly
+    common path, where the persisted guest session lands straight on Home,
+    the probe could never match and burned its full 35 s every single test.
     """
-    probe = FlutterFinder().by_text("NutriScan AI")
+    probes = [
+        (name, FlutterFinder().by_text(config.ROUTE_TEXT_MARKERS[name]))
+        for name in ("home", "auth")
+    ]
     deadline = time.time() + timeout
     while time.time() < deadline:
-        try:
-            # 3 000 ms sub-timeout matches wait_for_key/wait_for_text so
-            # each loop iteration costs at most 3 s + a tiny round-trip
-            # overhead rather than returning immediately on a timeout error.
-            driver.execute_script("flutter:waitFor", probe, 3000)
-            return  # Observatory is live — hand off to the test
-        except Exception:  # noqa: BLE001
-            time.sleep(0.5)
-    # If we reach here the app may be unusually slow to start; don't raise —
-    # let the test's own wait_for_* produce the failure with a specific,
-    # meaningful widget-level message rather than a generic readiness error.
+        for name, probe in probes:
+            try:
+                # 1 000 ms sub-timeout: two probes per cycle, so a miss on
+                # both still costs ~2 s rather than ~6 s.
+                driver.execute_script("flutter:waitFor", probe, 1000)
+                return name
+            except Exception:  # noqa: BLE001
+                pass
+        time.sleep(0.2)
+    # Don't raise — let the test's own wait_for_* produce the failure with a
+    # specific, meaningful widget-level message rather than a generic
+    # readiness error.
+    return None
 
 
 def pytest_addoption(parser):
@@ -164,14 +172,22 @@ def reset_to_guest_home(driver, auth_page, home_page):
     # to a flutter:waitFor round-trip. This absorbs the full ~15-16 s
     # cold-start dead zone (Impeller GPU init + Drift background isolate
     # startup) before the test starts, so the test's own timeout budget is
-    # never consumed by infrastructure latency. Replaces the previous
-    # blind time.sleep(2) which was too short by an order of magnitude.
-    _wait_for_driver_ready(driver)
-    try:
-        if auth_page.is_loaded():
+    # never consumed by infrastructure latency.
+    #
+    # The poll also tells us which screen we landed on, which is why there
+    # is no separate `auth_page.is_loaded()` probe here any more. That call
+    # ran `wait_for_text('NutriScan AI', timeout=30)` as a *negative* check
+    # on a screen that is normally Home — a second guaranteed-to-miss
+    # 30 s wait stacked on top of the readiness probe's own wasted 35 s.
+    # Together those two dead waits were ~65 s of the ~76 s that every
+    # fixture-using test took, which is what pushed shards past the job cap
+    # and left 75 tests never executed.
+    screen = _wait_for_app_ready(driver)
+    if screen == "auth":
+        try:
             auth_page.continue_as_guest()
-    except Exception:
-        pass
+        except Exception:  # noqa: BLE001 - fall through to the Home check below
+            pass
     home_page.is_loaded()
     return home_page
 
