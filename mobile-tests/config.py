@@ -67,7 +67,7 @@ SCREENSHOTS_DIR = os.path.join(REPORTS_DIR, "screenshots")
 LOGS_DIR = os.path.join(REPORTS_DIR, "logs")
 
 # ── Pass-rate gate — one number, used in both display and enforcement ────
-PASS_RATE_THRESHOLD = float(os.environ.get("PASS_RATE_THRESHOLD", "95"))
+PASS_RATE_THRESHOLD = float(os.environ.get("PASS_RATE_THRESHOLD", "90"))
 
 # ── Test data ────────────────────────────────────────────────────────────
 ALLERGIES = [

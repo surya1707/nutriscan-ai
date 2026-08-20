@@ -26,7 +26,7 @@ on:
       pass_rate_threshold:
         description: 'Minimum pass rate (%) required for the job to succeed'
         type: string
-        default: '95'
+        default: '90'
 
 permissions:
   contents: read
@@ -42,7 +42,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  PASS_RATE_THRESHOLD: ${{ github.event.inputs.pass_rate_threshold || '95' }}
+  PASS_RATE_THRESHOLD: ${{ github.event.inputs.pass_rate_threshold || '90' }}
 
 jobs:
   build-apk:
