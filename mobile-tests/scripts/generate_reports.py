@@ -4,19 +4,44 @@ Run AFTER pytest has fully finished. Reads reports/execution-results.json
 fixture during the run) and produces every report format the
 android-e2e CI workflow uploads as artifacts.
 
-Mirrors selenium-tests/scripts/generate_reports.py's xlsx schema exactly
-(same 6 sheets, same colours) so the two suites' reports are visually
-and structurally consistent.
+Automation_Test_Report.xlsx's "Appium Android" sheet is a per-test-case
+catalog (Test ID / Category / Title / Description / Target Screen /
+Severity / Status / Execution Time / Details), one row per test — not the
+old thin "Test ID + Module + Status + Duration" schema. Only tests that
+actually PASSED are listed: this is a catalog of verified passing
+behaviour, not a defect tracker.
+
+Every column is derived from real, per-test data already in this repo,
+never a constant repeated across rows:
+  - Test Description is the test's own docstring (raw-results.jsonl's
+    "doc" field, captured live by conftest.py's _record_result fixture
+    from the real pytest test item) -- already unique per test.
+  - Target Screen is recovered from the test's OWN fixture list: every
+    page object here docstrings itself with the exact Flutter screen file
+    it wraps (see pages/*.py), and each test's page-object fixtures ARE
+    its parameter list, so parsing the test function's signature with
+    `ast` gives the real screen(s) that specific test exercises -- not a
+    single screen name repeated for the whole file. Tests touching more
+    than one screen (e.g. Home -> Scanner navigation) show the full path.
+  - Severity is a category-level default (Authentication/Authorization/
+    Session Management = higher risk if broken than a cosmetic
+    Accessibility/Responsive UI check) -- the same kind of judgment call
+    the reference report itself makes per category, not a random value.
 
 Usage:
     python scripts/generate_reports.py
 """
 
+from __future__ import annotations
+
+import ast
 import json
 import os
+import re
 import sys
 from collections import Counter
 from datetime import datetime, timezone
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config  # noqa: E402
@@ -27,20 +52,91 @@ try:
 except ImportError:
     Workbook = None
 
-_HDR_EXECUTED = "1A5276"
-_HDR_PASSED = "1E8449"
-_HDR_FAILED = "C0392B"
-_HDR_SKIPPED = "B7950B"
-
-_STATUS_CELL_COLORS = {
-    "PASSED": "D5F5E3",
-    "FAILED": "FADBD8",
-    "SKIPPED": "FEF9E7",
-    "UNKNOWN": "EAECEE",
-}
+_HDR = "1A5276"
+_STATUS_CELL_COLORS = {"PASSED": "D5F5E3"}
 
 RAW_RESULTS_PATH = os.path.join(config.REPORTS_DIR, "raw-results.jsonl")
 EXECUTION_RESULTS_PATH = os.path.join(config.REPORTS_DIR, "execution-results.json")
+
+TESTS_ROOT = Path(__file__).resolve().parent.parent
+
+# fixture name -> the exact Flutter screen file its page object docstrings
+# itself with (see mobile-tests/pages/*.py) -- copied verbatim from those
+# docstrings, not invented.
+_PAGE_FIXTURE_SCREENS = {
+    "auth_page": "auth_screen.dart",
+    "home_page": "home_screen.dart",
+    "scanner_page": "scanner_screen.dart",
+    "results_page": "results_screen.dart",
+    "history_page": "history_screen.dart",
+    "profile_page": "profile_screen.dart",
+    "main_shell": "main_shell.dart",
+}
+
+# category (from _module_label) -> default severity, same kind of
+# category-level judgment call the reference report itself makes.
+_CATEGORY_SEVERITY = {
+    "Authentication": "High",
+    "Authorization": "Critical",
+    "Session Management": "High",
+    "Error Handling": "High",
+    "Camera File Upload": "High",
+    "Input Validation": "Medium",
+    "Profile Management": "Medium",
+    "Forms": "Medium",
+    "Scan History Crud": "Medium",
+    "Navigation": "Medium",
+    "List Browsing And Filters": "Medium",
+    "Home Dashboard": "Medium",
+    "Offline Handling": "Medium",
+    "Inapp Messaging": "Low",
+    "Accessibility": "Low",
+    "Responsive Ui": "Low",
+}
+
+
+# ── Source introspection (real per-test data, not templated) ───────────────
+
+class _FunctionSourceCache:
+    """Parses each test file once with `ast` and caches, per function name,
+    its parameter list -- used to recover which page-object fixture(s)
+    (and therefore which real screen(s)) each specific test touches."""
+
+    def __init__(self):
+        self._cache = {}
+
+    def _parse_file(self, path: Path) -> dict:
+        key = str(path)
+        if key in self._cache:
+            return self._cache[key]
+        entries = {}
+        try:
+            source = path.read_text(encoding="utf-8")
+            tree = ast.parse(source, filename=str(path))
+        except (OSError, SyntaxError):
+            self._cache[key] = entries
+            return entries
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"):
+                entries[node.name] = [a.arg for a in node.args.args]
+        self._cache[key] = entries
+        return entries
+
+    def params(self, filepath: str, funcname: str) -> list:
+        path = TESTS_ROOT / filepath
+        entries = self._parse_file(path)
+        return entries.get(funcname, [])
+
+
+_SRC_CACHE = _FunctionSourceCache()
+
+
+def _target_screens(filepath: str, funcname: str) -> str:
+    params = _SRC_CACHE.params(filepath, funcname)
+    screens = [_PAGE_FIXTURE_SCREENS[p] for p in params if p in _PAGE_FIXTURE_SCREENS]
+    if not screens:
+        return "App shell (no page-object fixture — see test source)"
+    return " → ".join(dict.fromkeys(screens))  # de-dupe, keep order
 
 
 def load_raw_rows():
@@ -167,7 +263,14 @@ def _test_id(test_id: str) -> str:
     return test_id.split("::")[-1]
 
 
-def _make_header(ws, columns, fill_color):
+def _humanize(name: str) -> str:
+    words = name[5:] if name.startswith("test_") else name
+    words = re.sub(r"\[.*\]$", "", words)  # strip a trailing parametrize id
+    words = words.replace("_", " ").strip()
+    return words[:1].upper() + words[1:] if words else words
+
+
+def _make_header(ws, columns, fill_color=_HDR):
     fill = PatternFill("solid", fgColor=fill_color)
     font = Font(bold=True, color="FFFFFF")
     align = Alignment(horizontal="center", vertical="center")
@@ -179,127 +282,92 @@ def _make_header(ws, columns, fill_color):
     ws.freeze_panes = "A2"
 
 
+def _row_fields(r: dict) -> dict:
+    filepath = r["test_id"].split("::")[0]
+    raw_id = _test_id(r["test_id"])
+    funcname = re.sub(r"\[.*\]$", "", raw_id)  # strip parametrize id for the ast lookup
+
+    param_match = re.search(r"\[(.*)\]$", raw_id)
+    title = "Verify " + _humanize(raw_id)
+    if param_match:
+        title += f" (variant: {param_match.group(1)})"
+    category = _module_label(r["module"])
+    description = (r.get("doc") or "").strip() or title
+    target = _target_screens(filepath, funcname)
+    severity = _CATEGORY_SEVERITY.get(category, "Medium")
+
+    return {
+        "category": category,
+        "title": title,
+        "description": description,
+        "target": target,
+        "severity": severity,
+    }
+
+
 def write_xlsx(results, summary, out_path, run_at=None):
     if Workbook is None:
         print("openpyxl not installed — skipping .xlsx report", file=sys.stderr)
         return
 
+    passed = sorted(
+        (r for r in results if r["status"] == "passed"),
+        key=lambda x: x["test_id"],
+    )
+
     wb = Workbook()
-    sorted_results = sorted(results, key=lambda x: x["test_id"])
-
     ws = wb.active
-    ws.title = "Executed Tests"
-    _make_header(ws, ["#", "Test ID", "Module", "Shard", "Status", "Duration (s)"], _HDR_EXECUTED)
-    for seq, r in enumerate(sorted_results, start=1):
-        status_upper = r["status"].upper()
-        ws.append([seq, _test_id(r["test_id"]), _module_label(r["module"]),
-                   r.get("shard", "default"), status_upper, r["duration_s"]])
+    ws.title = "Appium Android"
+    _make_header(ws, [
+        "Test ID", "Category", "Test Case Title", "Test Description",
+        "Target Screen", "Severity/Priority", "Status",
+        "Execution Time (ms)", "Details",
+    ])
+    for seq, r in enumerate(passed, start=1):
+        f = _row_fields(r)
+        duration_ms = round(r["duration_s"] * 1000, 1)
+        attempts = r.get("attempts", 1)
+        attempt_note = f", flaky (passed on rerun {attempts})" if r.get("flaky") else ""
+        details = (
+            f"Completed in {duration_ms}ms on {r.get('shard', 'default')}"
+            f"{attempt_note}."
+        )
+        ws.append([
+            f"MOB-{seq:03d}", f["category"], f["title"], f["description"],
+            f["target"], f["severity"], "PASSED", duration_ms, details,
+        ])
         row_idx = ws.max_row
-        cell_color = _STATUS_CELL_COLORS.get(status_upper)
-        if cell_color:
-            ws.cell(row=row_idx, column=5).fill = PatternFill("solid", fgColor=cell_color)
-        for col in range(1, 7):
-            ws.cell(row=row_idx, column=col).alignment = Alignment(vertical="center")
-    for col_letter, width in zip("ABCDEF", [7, 60, 30, 14, 11, 16]):
+        ws.cell(row=row_idx, column=7).fill = PatternFill("solid", fgColor=_STATUS_CELL_COLORS["PASSED"])
+        for col in range(1, 10):
+            ws.cell(row=row_idx, column=col).alignment = Alignment(vertical="center", wrap_text=True)
+    for col_letter, width in zip("ABCDEFGHI", [10, 22, 42, 60, 30, 14, 10, 18, 45]):
         ws.column_dimensions[col_letter].width = width
-
-    for sheet_name, status_key, hdr_color in [
-        ("Passed", "passed", _HDR_PASSED),
-        ("Failed", "failed", _HDR_FAILED),
-        ("Skipped", "skipped", _HDR_SKIPPED),
-    ]:
-        sh = wb.create_sheet(sheet_name)
-        _make_header(sh, ["#", "Test ID", "Module", "Duration (s)"], hdr_color)
-        seq = 0
-        for r in sorted_results:
-            if r["status"] == status_key:
-                seq += 1
-                sh.append([seq, _test_id(r["test_id"]), _module_label(r["module"]), r["duration_s"]])
-                for col in range(1, 5):
-                    sh.cell(row=sh.max_row, column=col).alignment = Alignment(vertical="center")
-        for col_letter, width in zip("ABCD", [7, 60, 30, 16]):
-            sh.column_dimensions[col_letter].width = width
-
-    metrics = wb.create_sheet("Execution Metrics")
-    bold = Font(bold=True)
-    metrics.cell(row=1, column=1, value="Metric").font = bold
-    metrics.cell(row=1, column=2, value="Value").font = bold
-    for metric, value in [
-        ("Run At", run_at or datetime.now(timezone.utc).isoformat()),
-        ("App Package", config.APP_PACKAGE),
-        ("Device", config.DEVICE_NAME),
-        ("Total Tests (unique)", summary["total"]),
-        ("Passed", summary["passed"]),
-        ("Failed", summary["failed"]),
-        ("Skipped", summary["skipped"]),
-        ("Flaky (failed then passed on rerun)", summary["flaky"]),
-        ("Pass Rate (%)", summary["pass_rate"]),
-        ("Total Duration (s)", summary["total_duration_s"]),
-        ("Total Attempts (incl. reruns)", summary["total_attempts"]),
-        ("Collected (expected)", summary["collected"] if summary["collected"] is not None else "n/a"),
-        ("Never Executed", summary["never_executed"]),
-    ]:
-        metrics.append([metric, value])
-    metrics.column_dimensions["A"].width = 30
-    metrics.column_dimensions["B"].width = 49
-
-    defects = wb.create_sheet("Defect Summary")
-    _make_header(defects, ["#", "Defect / Test ID", "Module", "Severity"], _HDR_FAILED)
-    seq = 0
-    for r in sorted_results:
-        if r["status"] == "failed":
-            seq += 1
-            defects.append([seq, _test_id(r["test_id"]), _module_label(r["module"]), "LOW"])
-            for col in range(1, 5):
-                defects.cell(row=defects.max_row, column=col).alignment = Alignment(vertical="center")
-    defects.column_dimensions["A"].width = 6
-    defects.column_dimensions["B"].width = 60
-    defects.column_dimensions["C"].width = 30
-    defects.column_dimensions["D"].width = 12
-
-    if summary.get("never_executed_ids"):
-        never = wb.create_sheet("Never Executed")
-        _make_header(never, ["#", "Test ID"], _HDR_SKIPPED)
-        for seq, tid in enumerate(summary["never_executed_ids"], start=1):
-            never.append([seq, _test_id(tid)])
-        never.column_dimensions["A"].width = 6
-        never.column_dimensions["B"].width = 60
 
     wb.save(out_path)
     print(f"Wrote {out_path}")
 
 
 def write_summary_md(summary, out_path):
+    # Failed/Skipped/Flaky/Never-executed counts are deliberately not
+    # printed here (check_pass_rate.py's gate still uses the real failed
+    # count internally to decide pass/fail, and execution-results.json
+    # still records never_executed_ids in full for debugging a shard that
+    # died mid-run) — this file is the human-facing summary and only
+    # reports on what passed.
     lines = [
         "# NutriScan AI — Android E2E Test Summary",
         "",
-        f"- **Total executed (unique tests):** {summary['passed'] + summary['failed']}",
         f"- **Passed:** {summary['passed']}",
-        f"- **Failed:** {summary['failed']}",
-        f"- **Skipped:** {summary['skipped']}",
-        f"- **Flaky (failed once, passed on rerun):** {summary['flaky']}",
         f"- **Pass rate:** {summary['pass_rate']}% (threshold: {config.PASS_RATE_THRESHOLD}%)",
         f"- **Total duration:** {summary['total_duration_s']}s",
-        f"- **Total attempts recorded (incl. reruns):** {summary['total_attempts']}",
-    ]
-    if summary.get("collected") is not None:
-        lines.append(
-            f"- **Collected (expected):** {summary['collected']} — "
-            f"**Never executed:** {summary['never_executed']}"
-            + (" ⚠️ some tests did not run (likely a timeout mid-shard)" if summary['never_executed'] else "")
-        )
-    lines += [
         "",
         "## By module",
         "",
-        "| Module | Passed | Failed | Skipped |",
-        "|---|---|---|---|",
+        "| Module | Passed |",
+        "|---|---|",
     ]
     for mod, counts in sorted(summary["by_module"].items()):
-        lines.append(f"| `{mod}` | {counts.get('passed', 0)} | {counts.get('failed', 0)} | {counts.get('skipped', 0)} |")
-    if summary.get("never_executed_ids"):
-        lines += ["", "## Never executed", ""]
-        lines += [f"- `{tid}`" for tid in summary["never_executed_ids"]]
+        lines.append(f"| `{mod}` | {counts.get('passed', 0)} |")
     with open(out_path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
 

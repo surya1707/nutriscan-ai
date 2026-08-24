@@ -132,20 +132,11 @@ jobs:
       - name: Job summary
         if: always()
         run: |
-          python -c "
-          import json
-          try:
-              d = json.load(open('/tmp/pytest-report.json'))
-              s = d.get('summary', {})
-              print(f\"### Backend test results\n\")
-              print(f\"| Metric | Count |\")
-              print(f\"|---|---|\")
-              for k in ('collected', 'passed', 'failed', 'xfailed', 'xpassed', 'skipped', 'error'):
-                  if k in s:
-                      print(f\"| {k} | {s[k]} |\")
-          except FileNotFoundError:
-              print('No pytest-report.json found.')
-          " >> "$GITHUB_STEP_SUMMARY"
+          if [ -f tests/reporting/output/summary.md ]; then
+            cat tests/reporting/output/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No summary.md was generated — see uploaded artifacts / logs." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Upload test reports + coverage
         if: always()

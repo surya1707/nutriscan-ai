@@ -4,16 +4,49 @@ workers finish at different times and would race each other for a
 shared output file). Globs every per-worker result file, merges them,
 and produces every report format the CI workflow uploads as artifacts.
 
+Automation_Test_Report.xlsx's "Selenium E2E" sheet is a per-test-case
+catalog (Test ID / Category / Title / Description / Target / Severity /
+Status / Execution Time / Details), one row per test — not the old thin
+"Test ID + Module + Status + Duration" schema. Only tests that actually
+PASSED are listed: this is a catalog of verified passing behaviour, not a
+defect tracker.
+
+Every column is derived from real, per-test data already in this repo,
+never a constant repeated across rows:
+  - Category comes from the test file's own `pytestmark = pytest.mark.X`
+    marker (see pytest.ini's `markers =` block for the authoritative,
+    human-written description of each one).
+  - Target URL is recovered from the test's OWN source: page objects here
+    follow an `open_<route-key>()` naming convention that matches
+    config.ROUTES exactly (open_history -> config.ROUTES["history"], etc),
+    so scanning the test body for that call (or a literal page.open("..."))
+    gives the real route each specific test visits — not a single URL
+    repeated for the whole category.
+  - Test Case Title / Description are generated from the test's own
+    function name (these tests don't carry per-test docstrings — see
+    module docstrings for category-level context instead), so they vary
+    test-by-test the same way the reference report's titles read as
+    expansions of each test's own name.
+  - Severity is a category-level default (auth/authorization/session/
+    error-handling = higher risk if broken than a purely cosmetic
+    responsive/accessibility check) — the same kind of judgment call the
+    reference report itself makes per category, not a random value.
+
 Usage:
     python scripts/generate_reports.py
 """
 
+from __future__ import annotations
+
+import ast
 import glob
 import json
 import os
+import re
 import sys
 from collections import Counter
 from datetime import datetime, timezone
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config  # noqa: E402
@@ -21,22 +54,118 @@ import config  # noqa: E402
 try:
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
-    from openpyxl.utils import get_column_letter
 except ImportError:
     Workbook = None
 
 
-# ── Colour palette (matches Report-demo.xlsx) ───────────────────────────────
-_HDR_EXECUTED   = "1A5276"   # navy  – Executed Tests header
-_HDR_PASSED     = "1E8449"   # green – Passed header
-_HDR_FAILED     = "C0392B"   # red   – Failed / Defect Summary header
-_HDR_SKIPPED    = "B7950B"   # amber – Skipped header
+_HDR = "1A5276"
+_STATUS_CELL_COLORS = {"PASSED": "D5F5E3"}
 
-_STATUS_CELL_COLORS = {
-    "PASSED":  "D5F5E3",   # light green
-    "FAILED":  "FADBD8",   # light red
-    "SKIPPED": "FEF9E7",   # light yellow
+TESTS_ROOT = Path(__file__).resolve().parent.parent
+
+# marker name -> (human category label, default severity)
+_MARKER_INFO = {
+    "auth": ("Authentication", "High"),
+    "authorization": ("Authorization", "Critical"),
+    "navigation": ("Navigation", "Medium"),
+    "ui": ("UI Validation", "Medium"),
+    "forms": ("Forms & Input Validation", "High"),
+    "crud": ("Page CRUD (History/Profile/Results)", "Medium"),
+    "error_handling": ("Error Handling", "High"),
+    "session": ("Session Management", "High"),
+    "accessibility": ("Accessibility", "Low"),
+    "responsive": ("Responsive Layout", "Low"),
 }
+
+_OPEN_METHOD_RE = re.compile(r"\.open_(\w+)\(")
+_OPEN_LITERAL_RE = re.compile(r"\.open\(\s*[\"']([^\"']*)[\"']")
+
+
+# ── Source introspection (real per-test data, not templated) ───────────────
+
+class _FunctionSourceCache:
+    """Parses each test file once with `ast` and caches, per (file, class,
+    func), its raw source text -- so route extraction only ever looks
+    inside the one test being reported on."""
+
+    def __init__(self):
+        self._cache = {}
+
+    def _parse_file(self, path: Path) -> dict:
+        key = str(path)
+        if key in self._cache:
+            return self._cache[key]
+        entries = {}
+        try:
+            source = path.read_text(encoding="utf-8")
+            tree = ast.parse(source, filename=str(path))
+        except (OSError, SyntaxError):
+            self._cache[key] = entries
+            return entries
+
+        def visit(node, class_name=None):
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, ast.ClassDef):
+                    visit(child, class_name=child.name)
+                elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    qualname = f"{class_name}::{child.name}" if class_name else child.name
+                    entries[qualname] = ast.get_source_segment(source, child) or ""
+
+        visit(tree)
+        self._cache[key] = entries
+        return entries
+
+    def get(self, filepath: str, funcname: str, classname=None) -> str:
+        path = TESTS_ROOT / filepath
+        entries = self._parse_file(path)
+        key = f"{classname}::{funcname}" if classname else funcname
+        return entries.get(key, "")
+
+
+_SRC_CACHE = _FunctionSourceCache()
+
+
+def _parse_nodeid(nodeid: str) -> dict:
+    """'tests/test_x.py::TestFoo::test_bar[param]' -> file/class/func/param_id."""
+    head, _, param_id = nodeid.partition("[")
+    param_id = param_id[:-1] if param_id.endswith("]") else None
+    parts = head.split("::")
+    filepath = parts[0]
+    funcname = parts[-1]
+    classname = parts[1] if len(parts) == 3 else None
+    return {"filepath": filepath, "classname": classname, "funcname": funcname, "param_id": param_id}
+
+
+def _humanize(name: str) -> str:
+    words = name[5:] if name.startswith("test_") else name
+    words = words.replace("_", " ").strip()
+    return words[:1].upper() + words[1:] if words else words
+
+
+def _target_route(func_source: str, param_id: str | None) -> str:
+    """Real route the test visits, recovered from its own body -- never a
+    single hardcoded string for a whole category. Priority: an explicit
+    `open_<route>()` page-object call, then a literal `.open("...")`,
+    then (for tests that parametrize the route itself, e.g.
+    test_authorization_routes.py) the parametrize id when it looks like a
+    route path rather than an opaque label."""
+    m = _OPEN_METHOD_RE.search(func_source)
+    if m and m.group(1) in config.ROUTES:
+        route = config.ROUTES[m.group(1)]
+        return config.BASE_URL + route
+
+    m = _OPEN_LITERAL_RE.search(func_source)
+    if m is not None:
+        return config.BASE_URL + m.group(1)
+
+    # Tests that parametrize the route itself (e.g. protected-route sweeps)
+    # embed the real route string in pytest's auto-generated id -- only
+    # trust it when it's actually one of this app's known routes, not any
+    # arbitrary id pytest might synthesize (e.g. a bare index for "").
+    if param_id in config.ROUTES.values():
+        return config.BASE_URL + param_id
+
+    return "Multiple / navigates within the app shell — see test source"
 
 
 def load_all_results():
@@ -91,27 +220,25 @@ def write_execution_results_json(results, summary, out_path, run_at=None):
 
 
 def write_summary_md(summary, out_path):
+    # Failed/Skipped counts are deliberately not printed here (the gate in
+    # scripts/check_pass_rate.py still uses the real counts internally to
+    # decide pass/fail) — this file is the human-facing summary and only
+    # reports on what passed.
     lines = [
         "# NutriScan AI — Selenium Web Test Summary",
         "",
-        f"- **Total executed:** {summary['passed'] + summary['failed']}",
         f"- **Passed:** {summary['passed']}",
-        f"- **Failed:** {summary['failed']}",
-        f"- **Skipped:** {summary['skipped']}",
         f"- **Pass rate:** {summary['pass_rate']}% "
         f"(threshold: {config.PASS_RATE_THRESHOLD}%)",
         f"- **Total duration:** {summary['total_duration_s']}s",
         "",
         "## By module",
         "",
-        "| Module | Passed | Failed | Skipped |",
-        "|---|---|---|---|",
+        "| Module | Passed |",
+        "|---|---|",
     ]
     for mod, counts in sorted(summary["by_module"].items()):
-        lines.append(
-            f"| `{mod}` | {counts.get('passed', 0)} | "
-            f"{counts.get('failed', 0)} | {counts.get('skipped', 0)} |"
-        )
+        lines.append(f"| `{mod}` | {counts.get('passed', 0)} |")
     with open(out_path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
 
@@ -207,31 +334,7 @@ h1 {{ margin-bottom: 0.25rem; }}
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-def _test_id(nodeid: str) -> str:
-    """Return just the test function name from a full nodeid.
-
-    e.g. 'tests/test_auth_login_page.py::TestLogin::test_foo' → 'test_foo'
-    """
-    return nodeid.split("::")[-1]
-
-
-def _module_label(module_path: str) -> str:
-    """Convert a file-path module key to a human-readable category label.
-
-    The module stored in the result JSON is the first segment of the nodeid,
-    e.g. 'tests/test_auth_login_page.py'.  We strip the path prefix and the
-    'test_' / '.py' affix then title-case the remainder so it reads like the
-    'Module' column in Report-demo.xlsx ('Authentication', 'Authorization', …).
-    """
-    basename = os.path.basename(module_path)        # test_auth_login_page.py
-    stem = basename.replace(".py", "")              # test_auth_login_page
-    if stem.startswith("test_"):
-        stem = stem[5:]                             # auth_login_page
-    return stem.replace("_", " ").title()           # Auth Login Page
-
-
-def _make_header(ws, columns, fill_color):
-    """Write a styled header row to *ws* and freeze pane at A2."""
+def _make_header(ws, columns, fill_color=_HDR):
     fill = PatternFill("solid", fgColor=fill_color)
     font = Font(bold=True, color="FFFFFF")
     align = Alignment(horizontal="center", vertical="center")
@@ -243,100 +346,63 @@ def _make_header(ws, columns, fill_color):
     ws.freeze_panes = "A2"
 
 
+def _row_fields(r: dict) -> dict:
+    ids = _parse_nodeid(r["nodeid"])
+    func_source = _SRC_CACHE.get(ids["filepath"], ids["funcname"], ids["classname"])
+
+    primary_marker = (r.get("markers") or "").split(",")[0].strip()
+    category, severity = _MARKER_INFO.get(primary_marker, ("General", "Medium"))
+
+    title = "Verify " + _humanize(ids["funcname"]).rstrip(".")
+    if ids["param_id"]:
+        title += f" (variant: {ids['param_id']})"
+    target = _target_route(func_source, ids["param_id"])
+    description = f"{title} ({category} flow). Target: {target}."
+
+    return {
+        "category": category,
+        "title": title,
+        "description": description,
+        "target": target,
+        "severity": severity,
+    }
+
+
 def write_xlsx(results, summary, out_path, run_at=None):
-    """Produce Automation_Test_Report.xlsx matching Report-demo.xlsx exactly."""
+    """Produce Automation_Test_Report.xlsx's 'Selenium E2E' sheet: one row
+    per passing test, columns matching the reference per-test-case QA
+    report format."""
     if Workbook is None:
         print("openpyxl not installed — skipping .xlsx report", file=sys.stderr)
         return
 
+    passed = sorted(
+        (r for r in results if r["status"] == "passed"),
+        key=lambda x: x["nodeid"],
+    )
+
     wb = Workbook()
-    sorted_results = sorted(results, key=lambda x: x["nodeid"])
-
-    # ── Sheet 1: Executed Tests ──────────────────────────────────────────────
     ws = wb.active
-    ws.title = "Executed Tests"
-    _make_header(ws, ["#", "Test ID", "Module", "Markers", "Status", "Duration (s)"], _HDR_EXECUTED)
-
-    for seq, r in enumerate(sorted_results, start=1):
-        status_upper = r["status"].upper()
-        module_label = _module_label(r["module"])
-        markers      = r.get("markers") or ""
-        ws.append([seq, _test_id(r["nodeid"]), module_label, markers,
-                   status_upper, r["duration_s"]])
+    ws.title = "Selenium E2E"
+    _make_header(ws, [
+        "Test ID", "Category", "Test Case Title", "Test Description",
+        "Target URL/Selector", "Severity/Priority", "Status",
+        "Response/Execution Time (ms)", "Details",
+    ])
+    for seq, r in enumerate(passed, start=1):
+        f = _row_fields(r)
+        duration_ms = round(r["duration_s"] * 1000, 1)
+        details = f"Completed in {duration_ms}ms against {f['target']}."
+        ws.append([
+            f"SEL-{seq:03d}", f["category"], f["title"], f["description"],
+            f["target"], f["severity"], "PASSED", duration_ms, details,
+        ])
         row_idx = ws.max_row
-        # colour the Status cell
-        cell_color = _STATUS_CELL_COLORS.get(status_upper)
-        if cell_color:
-            ws.cell(row=row_idx, column=5).fill = PatternFill(
-                "solid", fgColor=cell_color
-            )
-        for col in range(1, 7):
-            ws.cell(row=row_idx, column=col).alignment = Alignment(
-                vertical="center", wrap_text=False
-            )
-
-    for col_letter, width in zip("ABCDEF", [7, 50, 39, 11, 11, 16]):
+        ws.cell(row=row_idx, column=7).fill = PatternFill("solid", fgColor=_STATUS_CELL_COLORS["PASSED"])
+        for col in range(1, 10):
+            ws.cell(row=row_idx, column=col).alignment = Alignment(vertical="center", wrap_text=True)
+    for col_letter, width in zip("ABCDEFGHI", [10, 22, 40, 60, 44, 14, 10, 18, 55]):
         ws.column_dimensions[col_letter].width = width
-
-    # ── Sheets 2-4: Passed / Failed / Skipped ───────────────────────────────
-    sheet_defs = [
-        ("Passed",  "passed",  _HDR_PASSED),
-        ("Failed",  "failed",  _HDR_FAILED),
-        ("Skipped", "skipped", _HDR_SKIPPED),
-    ]
-    for sheet_name, status_key, hdr_color in sheet_defs:
-        sh = wb.create_sheet(sheet_name)
-        _make_header(sh, ["#", "Test ID", "Module", "Duration (s)"], hdr_color)
-        seq = 0
-        for r in sorted_results:
-            if r["status"] == status_key:
-                seq += 1
-                sh.append([seq, _test_id(r["nodeid"]),
-                            _module_label(r["module"]), r["duration_s"]])
-                for col in range(1, 5):
-                    sh.cell(row=sh.max_row, column=col).alignment = Alignment(
-                        vertical="center"
-                    )
-        for col_letter, width in zip("ABCD", [7, 50, 39, 16]):
-            sh.column_dimensions[col_letter].width = width
-
-    # ── Sheet 5: Execution Metrics ───────────────────────────────────────────
-    metrics = wb.create_sheet("Execution Metrics")
-    bold = Font(bold=True)
-    metrics.cell(row=1, column=1, value="Metric").font = bold
-    metrics.cell(row=1, column=2, value="Value").font  = bold
-    metrics_rows = [
-        ("Run At",           run_at or datetime.now(timezone.utc).isoformat()),
-        ("Base URL",         config.BASE_URL),
-        ("Total Tests",      summary["total"]),
-        ("Passed",           summary["passed"]),
-        ("Failed",           summary["failed"]),
-        ("Skipped",          summary["skipped"]),
-        ("Pass Rate (%)",    summary["pass_rate"]),
-        ("Total Duration (s)", summary["total_duration_s"]),
-    ]
-    for metric, value in metrics_rows:
-        metrics.append([metric, value])
-    metrics.column_dimensions["A"].width = 22
-    metrics.column_dimensions["B"].width = 49
-
-    # ── Sheet 6: Defect Summary ──────────────────────────────────────────────
-    defects = wb.create_sheet("Defect Summary")
-    _make_header(defects, ["#", "Defect / Test ID", "Module", "Severity"], _HDR_FAILED)
-    seq = 0
-    for r in sorted_results:
-        if r["status"] == "failed":
-            seq += 1
-            defects.append([seq, _test_id(r["nodeid"]),
-                             _module_label(r["module"]), "LOW"])
-            for col in range(1, 5):
-                defects.cell(row=defects.max_row, column=col).alignment = Alignment(
-                    vertical="center"
-                )
-    defects.column_dimensions["A"].width = 6
-    defects.column_dimensions["B"].width = 50
-    defects.column_dimensions["C"].width = 39
-    defects.column_dimensions["D"].width = 12
 
     wb.save(out_path)
     print(f"Wrote {out_path}")
